@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+.venv/
+venv/
+
+# OS
+.DS_Store
+.idea/
+.vscode/
+
+# Dataset & weights (too large for git; see Releases for checkpoints)
+data/
+checkpoints/
+checkpoints_pod/
+results_pod/
+*.pth
+*.dcm
+*.zip
+
+# Cached predictions tar
+predictions.tgz
+
+# Build / temp
+nohup.out
+training.log
+docs/kaggle.json
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc

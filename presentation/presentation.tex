@@ -1,0 +1,537 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+% Theme
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multicol}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+% Paths
+\graphicspath{{../results/}}
+
+% Colors
+\definecolor{polimi}{RGB}{0,45,100}
+\definecolor{fcosblue}{RGB}{33,150,243}
+\definecolor{fcospaperblue}{RGB}{13,71,161}
+\definecolor{retinaorange}{RGB}{255,152,0}
+\definecolor{fastergreen}{RGB}{76,175,80}
+
+\setbeamercolor{structure}{fg=polimi}
+\setbeamercolor{title}{fg=white,bg=polimi}
+\setbeamercolor{frametitle}{fg=polimi}
+
+%==============================================================================
+\title{Pneumonia Detection Using\\ Anchor-Free vs.\ Anchor-Based Object Detection}
+\subtitle{Reproducing and Extending Wu et al.\ (2024)}
+\author[Mandour \& Nuttini]{Mohamed Z.\ M.\ Mandour \and Elena Nuttini}
+\institute[PoliMI]{Numerical Analysis for Machine Learning\\Politecnico di Milano\\[0.5em]
+\footnotesize\texttt{mohamedzeyad.mandour@mail.polimi.it} \textbar{} \texttt{elena.nuttini@mail.polimi.it}}
+\date{May 2026}
+
+\titlegraphic{\includegraphics[height=1.4cm]{../docs/logo_polimi.png}}
+%==============================================================================
+
+\begin{document}
+
+%----------------------------------------------------------------------
+\begin{frame}
+\titlepage
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Outline}
+\tableofcontents
+\end{frame}
+
+%======================================================================
+\section{Introduction}
+%======================================================================
+
+%----------------------------------------------------------------------
+\begin{frame}{Motivation}
+\begin{columns}
+\begin{column}{0.58\textwidth}
+\scriptsize
+\begin{itemize}\setlength\itemsep{0.1em}
+    \item Pneumonia: leading infectious cause of death worldwide
+    \item Detection from chest X-rays is challenging:
+    \begin{itemize}\setlength\itemsep{0pt}
+        \item Subtle opacities, easily missed
+        \item Variable sizes and shapes
+        \item Overlapping pathologies
+    \end{itemize}
+    \item Deep learning object detection can localise lesions automatically
+    \item \textbf{Question:} do anchor-free detectors (FCOS) truly outperform anchor-based ones for this task, as Wu et al.\ (2024) argue?
+\end{itemize}
+\end{column}
+\begin{column}{0.4\textwidth}
+\centering
+\includegraphics[width=0.85\textwidth]{detection_samples.png}
+
+\vspace{0.2em}
+{\tiny RSNA Pneumonia Detection Challenge\\26{,}684 chest X-rays}
+\end{column}
+\end{columns}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Reference Paper}
+\begin{block}{Wu et al., \textit{Scientific Reports} (2024)}
+``Pneumonia detection based on RSNA dataset and anchor-free deep learning detector''
+\end{block}
+
+\vspace{0.5em}
+Key contributions:
+\begin{itemize}
+    \item First application of FCOS (anchor-free) detector to pneumonia detection
+    \item Comparison with anchor-based methods (RetinaNet, Faster R-CNN)
+    \item FCOS achieves AP@0.5 $\approx$ 28.5\% on the RSNA dataset
+    \item Demonstrates anchor-free advantage for medical object detection
+\end{itemize}
+\end{frame}
+
+%======================================================================
+\section{Background}
+%======================================================================
+
+%----------------------------------------------------------------------
+\begin{frame}{Detection Paradigms}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{block}{\textcolor{retinaorange}{Anchor-Based}}
+\begin{itemize}
+    \item Predefined anchor boxes at each location
+    \item Classify anchor as object/background
+    \item Regress box offsets from anchor
+    \item Need to design anchor sizes \& ratios
+\end{itemize}
+\textbf{Examples:} RetinaNet, Faster R-CNN
+\end{block}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{block}{\textcolor{fcosblue}{Anchor-Free (FCOS)}}
+\begin{itemize}
+    \item Per-pixel classification \& regression
+    \item Predict distances $(l, t, r, b)$ to box edges
+    \item Center-ness branch for quality
+    \item \textbf{No anchor hyperparameters!}
+\end{itemize}
+\textbf{Advantage:} Simpler, more flexible
+\end{block}
+\end{column}
+\end{columns}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Shared Architecture: ResNet-50 + FPN}
+\begin{center}
+\begin{tikzpicture}[scale=0.8, every node/.style={transform shape}]
+    % Backbone
+    \node[draw, fill=blue!10, minimum width=2.5cm, minimum height=1cm, rounded corners] (backbone) at (0,0) {ResNet-50};
+    % FPN
+    \node[draw, fill=green!10, minimum width=2.5cm, minimum height=1cm, rounded corners] (fpn) at (4.5,0) {FPN};
+    % Heads
+    \node[draw, fill=fcosblue!20, minimum width=2cm, minimum height=0.7cm, rounded corners] (fcos) at (9,1.5) {FCOS Head};
+    \node[draw, fill=retinaorange!20, minimum width=2cm, minimum height=0.7cm, rounded corners] (retina) at (9,0) {RetinaNet Head};
+    \node[draw, fill=fastergreen!20, minimum width=2cm, minimum height=0.7cm, rounded corners] (faster) at (9,-1.5) {Faster R-CNN Head};
+
+    % Arrows
+    \draw[->, thick] (backbone) -- (fpn);
+    \draw[->, thick] (fpn.east) -- ++(0.5,0) |- (fcos.west);
+    \draw[->, thick] (fpn.east) -- (retina.west);
+    \draw[->, thick] (fpn.east) -- ++(0.5,0) |- (faster.west);
+
+    % Labels
+    \node[below=0.3cm] at (backbone.south) {\footnotesize ImageNet pretrained};
+    \node[below=0.3cm] at (fpn.south) {\footnotesize Multi-scale features};
+\end{tikzpicture}
+\end{center}
+
+\vspace{0.5em}
+All four detectors share the \textbf{same backbone and neck}, ensuring fair comparison of the detection head paradigm.
+\end{frame}
+
+%======================================================================
+\section{Experimental Setup}
+%======================================================================
+
+%----------------------------------------------------------------------
+\begin{frame}{Dataset \& Training Configuration}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{block}{Dataset}
+\begin{itemize}
+    \item RSNA Pneumonia Detection Challenge
+    \item Full dataset: 26,684 images
+    \item Patient-level 80/20 split
+    \item DICOM $\to$ PNG preprocessing
+    \item $512 \times 512$ resolution
+\end{itemize}
+\end{block}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{block}{Training}
+\begin{itemize}
+    \item Optimizer: Adam ($\text{lr}=10^{-3}$); SGD for FCOS paper-recipe ablation
+    \item Weight decay: $10^{-4}$ (Adam) / $1.6\!\times\!10^{-4}$ (SGD)
+    \item Epochs: 40 for every detector
+    \item Batch size: 32 / 16 (F-RCNN)
+    \item Cosine annealing (Adam) / step decay at $24,32$ (SGD)
+    \item EMA (decay = 0.999), backbone frozen first 3 epochs
+\end{itemize}
+\end{block}
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\centering
+{\footnotesize \textit{Hardware: 4$\times$ NVIDIA H100 80\,GB SXM (1 model per GPU, parallel training, BF16). End-to-end wall-clock $\approx$ 2.5\,h.}}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Data Augmentation}
+Medical imaging--specific pipeline (\texttt{albumentations}):
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+    \item \textbf{CLAHE} ($p=0.3$) --- local contrast
+    \item \textbf{Brightness/Contrast} ($p=0.4$)
+    \item \textbf{RandomGamma} ($p=0.2$)
+    \item \textbf{HorizontalFlip} ($p=0.5$)
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+    \item \textbf{Affine} ($p=0.3$) --- shift/scale/rotate
+    \item \textbf{Blur / Noise} ($p=0.2$)
+    \item \textbf{Grid/Optical distortion} ($p=0.15$)
+    \item \textbf{CoarseDropout} ($p=0.15$)
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{1em}
+\begin{itemize}
+    \item No vertical flip --- chest X-rays are always upright
+    \item All transforms applied jointly to images \textbf{and} bounding boxes
+    \item Evaluation: TTA (horizontal flip) + Gaussian Soft-NMS
+\end{itemize}
+\end{frame}
+
+%======================================================================
+\section{Results}
+%======================================================================
+
+%----------------------------------------------------------------------
+\begin{frame}{Training Loss Curves}
+\begin{center}
+\includegraphics[width=0.6\textwidth]{training_loss.png}
+\end{center}
+\scriptsize
+\begin{itemize}\setlength\itemsep{0pt}
+    \item Different loss formulations --- not directly comparable in magnitude
+    \item FCOS: center-ness + dense regression; RetinaNet: focal loss; F-RCNN: RPN + ROI
+\end{itemize}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Validation AP Over Training}
+\begin{center}
+\includegraphics[width=0.6\textwidth]{val_ap_over_epochs.png}
+\end{center}
+\scriptsize
+\begin{itemize}\setlength\itemsep{0pt}
+    \item All four detectors trained for the same $40$-epoch budget; no early-stopping trigger.
+    \item Peak EMA checkpoint: epoch $40$ (FCOS-Adam, $35.7\%$), $24$ (FCOS-SGD, $39.9\%$), $12$ (RetinaNet, $37.3\%$), $12$ (F-RCNN, $42.2\%$).
+    \item Anchor-based detectors saturate within $\sim 12$ epochs and drift down; FCOS-Adam is still rising at the budget cap.
+\end{itemize}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Detection Performance Comparison}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{center}
+\includegraphics[width=\textwidth]{ap_comparison.png}
+\end{center}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{center}
+\includegraphics[width=\textwidth]{ar_comparison.png}
+\end{center}
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\centering
+{\footnotesize Evaluated with TTA and Soft-NMS on validation set.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Precision--Recall \& Patient Classification}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\begin{center}
+\includegraphics[width=0.9\textwidth]{pr_curve.png}
+\end{center}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{center}
+\includegraphics[width=0.9\textwidth]{classification_metrics.png}
+\end{center}
+\end{column}
+\end{columns}
+
+\vspace{0.1em}
+{\scriptsize Patient-level classification: positive if any detection has confidence $> 0.3$.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Training Speed}
+\begin{center}
+\includegraphics[width=0.55\textwidth]{epoch_times.png}
+\end{center}
+\begin{itemize}
+    \item All models trained on H100 80\,GB SXM with BF16 mixed precision
+    \item One-stage detectors (FCOS, RetinaNet) faster than two-stage (Faster R-CNN)
+\end{itemize}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{AP vs.\ IoU Threshold}
+\begin{center}
+\includegraphics[width=0.7\textwidth]{ap_vs_iou.png}
+\end{center}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Detection Samples}
+\begin{center}
+\includegraphics[height=0.75\textheight,keepaspectratio]{detection_samples.png}
+\end{center}
+{\scriptsize Green = ground truth, colored = model predictions with confidence scores.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Detection Performance}
+\vspace{-0.5em}
+\begin{table}
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\toprule
+Method & AP@0.5 & $AP_S^{\mathrm{R}}$ & $AP_M^{\mathrm{R}}$ & $AP_L^{\mathrm{R}}$ & $AR_{10}$ \\
+\midrule
+\textcolor{fcosblue}{\textbf{FCOS} (Adam)} & 35.3 & 3.6 & 12.1 & 31.8 & 83.5 \\
+\textcolor{fcospaperblue}{\textbf{FCOS} (paper SGD)} & 39.8 & 3.6 & 13.4 & 34.0 & 86.4 \\
+\textcolor{retinaorange}{RetinaNet} & 41.2 & 4.3 & 14.6 & 32.6 & 83.0 \\
+\textcolor{fastergreen}{Faster R-CNN} & 42.9 & 4.0 & 15.3 & 36.9 & 86.5 \\
+\textbf{Ensemble (FCOS+Retina)} & 42.0 & 4.2 & 14.9 & 35.0 & 85.1 \\
+\midrule
+\textit{Wu et al.\ FCOS} & 28.5 & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption*{\scriptsize Detection: TTA + Soft-NMS, scores in \%. Size buckets are RSNA-percentile tertiles (COCO buckets put $99\%$ of RSNA boxes into ``large'').}
+\end{table}
+
+\vspace{-1.2em}
+\begin{table}
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\toprule
+Method & Accuracy & Precision & Recall & F1 \\
+\midrule
+\textcolor{fcosblue}{\textbf{FCOS} (Adam)} & 32.2 & 25.2 & 99.6 & 40.2 \\
+\textcolor{fcospaperblue}{\textbf{FCOS} (paper SGD)} & 41.5 & 28.1 & 99.6 & 43.8 \\
+\textcolor{retinaorange}{RetinaNet} & 83.8 & 85.3 & 35.1 & 49.7 \\
+\textcolor{fastergreen}{Faster R-CNN} & 60.5 & 36.4 & 98.1 & 53.2 \\
+\textbf{Ensemble} & 80.7 & 56.1 & 72.0 & 63.0 \\
+\bottomrule
+\end{tabular}
+\caption*{\scriptsize Patient-level classification (\%) at $\tau=0.3$.}
+\end{table}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{FCOS Paper-Recipe Ablation}
+\footnotesize
+\textbf{Question:} how much of the FCOS-vs.-anchor-based gap is the optimiser?\\
+\textbf{Setup:} same architecture, augmentation, EMA, TTA. Only optimiser changed: Adam $\to$ SGD+momentum~$0.9$, wd~$1.6\!\times\!10^{-4}$, lr~$5\!\times\!10^{-3}$, $40$ epochs.
+
+\begin{columns}
+\begin{column}{0.50\textwidth}
+\centering
+\scriptsize
+\begin{tabular}{lcc}
+\toprule
+& AP@0.5 & $\Delta$ vs.\ Adam \\
+\midrule
+FCOS (Adam, ours)        & $35.3$ & --        \\
+FCOS (paper SGD, ours)   & $\mathbf{39.8}$ & $+4.5$ \\
+RetinaNet                & $41.2$ & --        \\
+Faster R-CNN             & $42.9$ & --        \\
+\bottomrule
+\end{tabular}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{val_ap_over_epochs.png}
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\textbf{Finding:} val-AP rises through epoch~$24$ ($39.9\%$) then plateaus flat through epoch~$40$ ($39.3\%$). TTA+Soft-NMS at test time gives $39.8\%$ AP@0.5, with a $95\%$ bootstrap CI of $[37.1, 43.1]$ that overlaps RetinaNet's $[38.2, 44.1]$. \textbf{Under matched training budget, FCOS with the paper recipe is statistically indistinguishable from RetinaNet on this split.}
+\end{frame}
+
+%======================================================================
+\section{Discussion \& Conclusion}
+%======================================================================
+
+%----------------------------------------------------------------------
+\begin{frame}{Key Findings}
+\footnotesize
+\begin{enumerate}\setlength\itemsep{0.3em}
+    \item \textbf{All detectors beat the paper's FCOS} ($28.5\%$ AP@0.5):
+    FCOS-Adam $35.3$ (+6.8), FCOS-SGD $39.8$ (+11.3), RetinaNet $41.2$ (+12.7), F-RCNN $42.9$ (+14.4).
+
+    \item \textbf{Anchor-based \emph{outperforms} anchor-free in our setup} (counter to Wu et al.)
+    \begin{itemize}\setlength\itemsep{0pt}
+        \item Same backbone, same recipe, same epochs $\Rightarrow$ anchor priors win on AP@0.5
+        \item The paper SGD ablation closes $\sim$half of the gap to anchor-based ($+3.4$) but does not erase it
+        \item Paired bootstrap F-RCNN vs RetinaNet: $+1.69$ pts CI $[-0.25,+3.49]$, $p = 0.080$ -- marginal, not significant at $5\%$
+    \end{itemize}
+
+    \item \textbf{Ensemble wins the clinically-relevant metric}
+    \begin{itemize}\setlength\itemsep{0pt}
+        \item WBF (FCOS+RetinaNet): Patient F1 $= 63.0\%$ (+13.5 vs best single)
+        \item F-RCNN excluded: its optimal threshold ($0.824$) distorts the 0.3 cut
+    \end{itemize}
+
+    \item \textbf{Budget \& reproducibility}: $\sim$2.5\,h on 4$\times$H100, $\sim$\$30 cloud cost; single-command pipeline at \texttt{github.com/moa155/NAML}.
+\end{enumerate}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Robustness Checks}
+We complement the single training run with six post-hoc analyses on the cached predictions ---
+no retraining required:
+\begin{itemize}
+    \item \textbf{Patient-level bootstrap CIs} on AP@0.5 ($B=500$ resamples) $\Rightarrow$ the FCOS-vs.-anchor-based gap is outside the $95\%$ intervals.
+    \item \textbf{Three-way split protocol}: Youden threshold fitted on a calibration half, F1 reported on a held-out test half $\Rightarrow$ confirms our F1 numbers are not threshold-on-test artefacts.
+    \item \textbf{RSNA-percentile size buckets} (instead of inappropriate COCO 32/96 cutoffs) $\Rightarrow$ shows where each detector excels.
+    \item \textbf{FROC + CPM} (the canonical medical-detection metric).
+    \item \textbf{Reliability diagrams and ECE} on patient max-scores $\Rightarrow$ quantifies the calibration gap.
+    \item \textbf{Learnt aggregator} (logistic regression, 5-fold CV, 7 per-patient features) $\Rightarrow$ replaces the naive ``any box $>\tau$'' rule and lifts FCOS+ensemble patient F1.
+\end{itemize}
+\centering
+\emph{Single-seed retraining, per-site stratification and external-dataset validation remain genuinely future work.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{FROC Curve --- Localisation Quality vs.\ False Positives}
+\begin{center}
+\includegraphics[width=0.62\textwidth]{froc.png}
+\end{center}
+{\scriptsize Mean sensitivity over $\{0.125, 0.25, 0.5, 1, 2, 4, 8\}$ FP/image (CPM): Faster R-CNN $68.7$ $>$ Ensemble $68.1$ $>$ RetinaNet $66.5$ $\approx$ FCOS-SGD $66.4$ $>$ FCOS-Adam $62.7$. The WBF Ensemble matches Faster R-CNN within $0.6$ CPM (despite trailing by $0.9$ on AP@0.5) because the coverage term suppresses single-model singletons.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Calibration --- Why Fixed-Threshold F1 is Misleading}
+\begin{center}
+\includegraphics[width=0.82\textwidth]{calibration.png}
+\end{center}
+{\scriptsize Bars = empirical pneumonia rate per predicted-score bin; dashed = perfect calibration. ECE: RetinaNet $\mathbf{10.7\%}$, Ensemble $10.9\%$, FCOS Adam $22.0\%$, FCOS SGD $22.5\%$, Faster R-CNN $26.4\%$. RetinaNet's focal-loss head is markedly better calibrated than the others $\Rightarrow$ a single fixed threshold cannot rank the detectors fairly.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Learnt Patient Aggregator --- the F1 gap was a calibration artefact}
+\begin{center}
+\large
+\begin{tabular}{lcc}
+\toprule
+Detector & Naive F1 ($\tau=0.3$) & Learnt-Agg.\ F1 (5-fold OOF) \\
+\midrule
+FCOS (Adam) & $40.2$ & $\mathbf{62.9}$ \quad \textcolor{polimi}{($+22.7$)} \\
+FCOS (paper SGD) & $43.8$ & $\mathbf{65.0}$ \quad \textcolor{polimi}{($+21.2$)} \\
+RetinaNet & $49.7$ & $\mathbf{67.3}$ \quad \textcolor{polimi}{($+17.6$)} \\
+Faster R-CNN & $53.2$ & $\mathbf{63.3}$ \quad \textcolor{polimi}{($+10.1$)} \\
+Ensemble (FCOS+Retina) & $63.0$ & $\mathbf{65.0}$ \quad \textcolor{polimi}{($+2.0$)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.8em}
+{\small A 7-feature logistic regression (max, mean, sum, count, top-3 scores, spatial spread of detection centres) on per-patient features, evaluated strictly out-of-fold.}
+
+\vspace{0.5em}
+\centering
+\emph{The huge F1 lift on FCOS+RetinaNet and the small lift on the already-well-calibrated Ensemble shows the gap was \textbf{calibration, not detection quality}.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Headline Result}
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+& \textbf{AP@0.5} & \textbf{Patient F1} & \textbf{Patient F1} \\
+& & ($\tau=0.3$, naive) & (learnt aggregator) \\
+\midrule
+Wu et al.\ 2024 (paper FCOS) & $28.5$ & -- & -- \\
+Our FCOS (Adam) & $35.3$ & $40.2$ & $\mathbf{62.9}$ \\
+Our FCOS (paper SGD) & $39.8$ & $43.8$ & $\mathbf{65.0}$ \\
+Our RetinaNet & $41.2$ & $49.7$ & $\mathbf{67.3}$ \\
+Our Faster R-CNN & $\mathbf{42.9}$ & $53.2$ & $63.3$ \\
+\textbf{WBF Ensemble (FCOS+Retina)} & $42.0$ & $\mathbf{63.0}$ & $\mathbf{65.0}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+\begin{itemize}
+    \item \textbf{On AP@0.5} the anchor-based detectors win, with bootstrap-CI separation from FCOS.
+    \item \textbf{On patient F1} all three are within $\sim 3$ points once the threshold is honest.
+    \item \textbf{The paper's $\tau=0.3$ rule was the metric, not the detectors, that drove the apparent F1 gap.}
+\end{itemize}
+
+\vspace{0.3em}
+{\tiny All four detectors trained for the same $40$-epoch budget on $4\!\times\!$H100, evaluated with TTA + Soft-NMS, and analysed with the same patient-level bootstrap protocol.}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{References}
+\footnotesize
+\begin{itemize}
+    \item Wu et al., ``Pneumonia detection based on RSNA dataset and anchor-free deep learning detector,'' \textit{Scientific Reports}, 2024.
+    \item Tian et al., ``FCOS: Fully Convolutional One-Stage Object Detection,'' \textit{ICCV}, 2019.
+    \item Lin et al., ``Focal Loss for Dense Object Detection,'' \textit{ICCV}, 2017.
+    \item Lin et al., ``Feature Pyramid Networks for Object Detection,'' \textit{CVPR}, 2017.
+    \item Ren et al., ``Faster R-CNN,'' \textit{NeurIPS}, 2015.
+    \item He et al., ``Deep Residual Learning for Image Recognition,'' \textit{CVPR}, 2016.
+\end{itemize}
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}
+\centering
+\vfill
+{\Large\textbf{Thank You}}\\[1em]
+{\large Questions?}\\[2em]
+{\footnotesize Code available at \url{https://github.com/moa155/NAML}}
+\vfill
+\end{frame}
+
+\end{document}
