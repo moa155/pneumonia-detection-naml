@@ -393,7 +393,7 @@ Faster R-CNN             & $42.9$ & --        \\
 \end{columns}
 
 \vspace{0.5em}
-\textbf{Finding:} val-AP rises through epoch~$24$ ($39.9\%$) then plateaus flat through epoch~$40$ ($39.3\%$). TTA+Soft-NMS at test time gives $39.8\%$ AP@0.5, with a $95\%$ bootstrap CI of $[37.1, 43.1]$ that overlaps RetinaNet's $[38.2, 44.1]$. \textbf{Under matched training budget, FCOS with the paper recipe is statistically indistinguishable from RetinaNet on this split.}
+\textbf{Finding:} val-AP rises through epoch~$24$ ($39.9\%$) then plateaus flat through epoch~$40$ ($39.3\%$). TTA+Soft-NMS at test time gives $39.8\%$ AP@0.5. The per-patient paired bootstrap FCOS-SGD $-$ RetinaNet on the cached predictions returns $-1.38$ AP, $95\%$ CI $[-3.49, +0.59]$, $p = 0.180$ ($B = 200$): \textbf{the SGD ablation narrows the FCOS-vs-RetinaNet gap but does not close it,} and ``failure to reject'' on a single training seed is not equivalence.
 \end{frame}
 
 %======================================================================
@@ -407,37 +407,39 @@ Faster R-CNN             & $42.9$ & --        \\
     \item \textbf{All detectors beat the paper's FCOS} ($28.5\%$ AP@0.5):
     FCOS-Adam $35.3$ (+6.8), FCOS-SGD $39.8$ (+11.3), RetinaNet $41.2$ (+12.7), F-RCNN $42.9$ (+14.4).
 
-    \item \textbf{Anchor-based \emph{outperforms} anchor-free in our setup} (counter to Wu et al.)
+    \item \textbf{Anchor-based outperforms anchor-free under a shared Adam recipe} (counter to Wu et al.)
     \begin{itemize}\setlength\itemsep{0pt}
-        \item Same backbone, same recipe, same epochs $\Rightarrow$ anchor priors win on AP@0.5
-        \item The paper SGD ablation closes $\sim$half of the gap to anchor-based ($+3.4$) but does not erase it
-        \item Paired bootstrap F-RCNN vs RetinaNet: $+1.69$ pts CI $[-0.25,+3.49]$, $p = 0.080$ -- marginal, not significant at $5\%$
+        \item The SGD ablation narrows the FCOS-vs-RetinaNet gap but the paired bootstrap on the per-patient difference does \emph{not} licence equivalence: $-1.38$ AP, CI $[-3.49, +0.59]$, $p = 0.180$.
+        \item Paired F-RCNN vs RetinaNet: $+1.69$ AP, CI $[-0.25, +3.49]$, $p = 0.080$ -- not significant at $5\%$, and a Bonferroni correction for the family of 5 tests ($\alpha = 0.01$) pushes it further away.
+        \item Only F-RCNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives Bonferroni.
     \end{itemize}
 
-    \item \textbf{Ensemble wins the clinically-relevant metric}
+    \item \textbf{The ensemble headline at $\tau = 0.3$ is a calibration artefact}
     \begin{itemize}\setlength\itemsep{0pt}
-        \item WBF (FCOS+RetinaNet): Patient F1 $= 63.0\%$ (+13.5 vs best single)
-        \item F-RCNN excluded: its optimal threshold ($0.824$) distorts the 0.3 cut
+        \item WBF F1 $= 63.0\%$ at the paper's fixed $\tau = 0.3$ ($+13.5$ over the best single model \emph{at that arbitrary cut}).
+        \item Under a fair operating point, RetinaNet learnt-aggregator F1 $= 67.3\%$ wins -- the single best patient-level number in the study.
+        \item Adding F-RCNN to the ensemble hurts F1 because its optimal threshold ($0.824$) is far from $0.3$.
     \end{itemize}
 
-    \item \textbf{Budget \& reproducibility}: $\sim$2.5\,h on 4$\times$H100, $\sim$\$30 cloud cost; single-command pipeline at \texttt{github.com/moa155/NAML}.
+    \item \textbf{Caveats stated upfront}: single training seed per detector (no run-to-run variance estimate), no held-out test set, selection-on-val checkpoints, no Holm/Bonferroni correction in the main tables. End-to-end $\sim$2.5\,h on 4$\times$H100, $\sim$\$30 cloud; pipeline at \texttt{github.com/moa155/pneumonia-detection-naml}.
 \end{enumerate}
 \end{frame}
 
 %----------------------------------------------------------------------
 \begin{frame}{Robustness Checks}
-We complement the single training run with six post-hoc analyses on the cached predictions ---
+We complement the single training run with seven post-hoc analyses on the cached predictions ---
 no retraining required:
 \begin{itemize}
-    \item \textbf{Patient-level bootstrap CIs} on AP@0.5 ($B=500$ resamples) $\Rightarrow$ the FCOS-vs.-anchor-based gap is outside the $95\%$ intervals.
-    \item \textbf{Three-way split protocol}: Youden threshold fitted on a calibration half, F1 reported on a held-out test half $\Rightarrow$ confirms our F1 numbers are not threshold-on-test artefacts.
-    \item \textbf{RSNA-percentile size buckets} (instead of inappropriate COCO 32/96 cutoffs) $\Rightarrow$ shows where each detector excels.
-    \item \textbf{FROC + CPM} (the canonical medical-detection metric).
+    \item \textbf{Patient-level bootstrap CIs} on AP@0.5 ($B = 500$, per-patient resampling).
+    \item \textbf{Three-way split protocol}: Youden threshold fitted on a calibration half, F1 reported on a held-out test half $\Rightarrow$ rules out threshold-on-test bias.
+    \item \textbf{RSNA-percentile size buckets} (instead of inappropriate COCO $32/96$ cutoffs).
+    \item \textbf{FROC + CPM} (canonical medical-detection metric).
     \item \textbf{Reliability diagrams and ECE} on patient max-scores $\Rightarrow$ quantifies the calibration gap.
-    \item \textbf{Learnt aggregator} (logistic regression, 5-fold CV, 7 per-patient features) $\Rightarrow$ replaces the naive ``any box $>\tau$'' rule and lifts FCOS+ensemble patient F1.
+    \item \textbf{Learnt aggregator} (logistic regression, $5$-fold CV, $7$ per-patient features) $\Rightarrow$ replaces the naive ``any box $>\tau$'' rule.
+    \item \textbf{Five paired bootstraps on AP@0.5 differences} $\Rightarrow$ only F-RCNN $-$ FCOS-SGD survives Bonferroni at $\alpha = 0.01$; the other four pairs fail to reject equivalence.
 \end{itemize}
 \centering
-\emph{Single-seed retraining, per-site stratification and external-dataset validation remain genuinely future work.}
+\emph{The bootstraps capture validation-patient resampling variance only, not run-to-run optimisation noise. Multi-seed retraining, per-site stratification, and external-dataset validation remain future work.}
 \end{frame}
 
 %----------------------------------------------------------------------
@@ -502,13 +504,13 @@ Our Faster R-CNN & $\mathbf{42.9}$ & $53.2$ & $63.3$ \\
 
 \vspace{0.5em}
 \begin{itemize}
-    \item \textbf{On AP@0.5} the anchor-based detectors win, with bootstrap-CI separation from FCOS.
-    \item \textbf{On patient F1} all three are within $\sim 3$ points once the threshold is honest.
-    \item \textbf{The paper's $\tau=0.3$ rule was the metric, not the detectors, that drove the apparent F1 gap.}
+    \item \textbf{On AP@0.5} the anchor-based detectors win; the only strict ordering that survives the paired bootstrap with Bonferroni ($\alpha = 0.01$, family of $5$ tests) is F-RCNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$).
+    \item \textbf{On patient F1 under a fair operating point} all four detectors land in a $\sim 3$-point band ($63.3$--$67.3$); the apparent $40 \to 63$ gap was the $\tau = 0.3$ rule, not the detectors.
+    \item \textbf{The best single patient-level number in the study is RetinaNet's learnt-aggregator F1 = $67.3\%$}, not the ensemble.
 \end{itemize}
 
 \vspace{0.3em}
-{\tiny All four detectors trained for the same $40$-epoch budget on $4\!\times\!$H100, evaluated with TTA + Soft-NMS, and analysed with the same patient-level bootstrap protocol.}
+{\tiny All four detectors trained for the same $40$-epoch budget on $4\!\times\!$H100, evaluated with TTA + Soft-NMS. All numbers come from a single training seed; bootstrap CIs cover validation-patient resampling, not run-to-run optimisation noise.}
 \end{frame}
 
 %----------------------------------------------------------------------
@@ -530,7 +532,7 @@ Our Faster R-CNN & $\mathbf{42.9}$ & $53.2$ & $63.3$ \\
 \vfill
 {\Large\textbf{Thank You}}\\[1em]
 {\large Questions?}\\[2em]
-{\footnotesize Code available at \url{https://github.com/moa155/NAML}}
+{\footnotesize Code available at \url{https://github.com/moa155/pneumonia-detection-naml}}
 \vfill
 \end{frame}
 

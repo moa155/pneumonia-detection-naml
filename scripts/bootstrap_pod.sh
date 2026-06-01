@@ -8,22 +8,22 @@
 # so a Stop-then-Start cycle never loses work again.
 #
 # Usage on a fresh pod:
-#   curl -sL https://raw.githubusercontent.com/moa155/NAML/main/Project_Pneumonia_Detection/scripts/bootstrap_pod.sh | bash
+#   curl -sL https://raw.githubusercontent.com/moa155/pneumonia-detection-naml/main/scripts/bootstrap_pod.sh | bash
 #   # or, if you already cloned somewhere:
 #   bash scripts/bootstrap_pod.sh
 #
 # What it does:
-#   1. If /workspace/Project_Pneumonia_Detection is missing, git-clone into it.
-#   2. Symlink /NAML/Project_Pneumonia_Detection -> the workspace clone so
-#      existing scripts/paths keep working.
+#   1. If /workspace/pneumonia-detection-naml is missing, git-clone into it.
+#   2. Symlink /pneumonia-detection-naml -> the workspace clone so existing
+#      scripts/paths keep working.
 #   3. Hand off to scripts/cloud_setup.sh for kaggle + dataset + preprocess.
 # ----------------------------------------------------------------------
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/moa155/NAML.git}"
-SUBDIR="Project_Pneumonia_Detection"
+REPO_URL="${REPO_URL:-https://github.com/moa155/pneumonia-detection-naml.git}"
+SUBDIR="pneumonia-detection-naml"
 WORKSPACE_DIR="/workspace/$SUBDIR"
-LEGACY_LINK="/NAML/$SUBDIR"
+LEGACY_LINK="/$SUBDIR"
 
 banner() { echo; echo "=== $1 ==="; echo; }
 

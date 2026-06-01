@@ -14,18 +14,18 @@ Four detector variants are implemented and compared for pneumonia localisation o
 
 ## TL;DR
 
-All detectors surpass the paper’s reported FCOS AP@0.5 of 28.5%. Anchor-based detectors win on AP@0.5; switching FCOS from Adam to the paper’s SGD recipe brings FCOS to within statistical noise of RetinaNet (overlapping 95% bootstrap CIs). A Weighted Box Fusion ensemble of FCOS and RetinaNet matches Faster R-CNN on AP@0.5 while delivering the best patient-level F1 at the fixed τ=0.3 threshold.
+All detectors surpass the paper's reported FCOS AP@0.5 of 28.5%. Under a shared Adam recipe the anchor-based detectors decisively win on AP@0.5; switching FCOS to the paper's SGD recipe narrows but does not close the gap to RetinaNet (paired-bootstrap difference $-1.38$ AP, 95% CI $[-3.49, +0.59]$, $p = 0.180$). The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a calibration artefact: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3% — the best patient-level number in the study.
 
-| Model | AP@0.5 | ROC AUC | Patient F1 @ 0.3 | vs paper AP |
-|---|---|---|---|---|
-| Wu et al. 2024 (paper FCOS) | 28.5 | — | — | baseline |
-| Our FCOS (Adam) | **35.3** | 86.5 | 40.2 | **+6.8** |
-| Our FCOS (paper SGD ablation) | **39.8** | 88.1 | 43.8 | **+11.3** |
-| Our RetinaNet | **41.2** | 89.1 | 49.7 | **+12.7** |
-| Our Faster R-CNN | **42.9** | 88.9 | 53.2 | **+14.4** |
-| **WBF ensemble (FCOS + RetinaNet)** | **42.0** | 87.5 | **63.0** | **+13.5** |
+| Model | AP@0.5 | ROC AUC | Patient F1 @ τ=0.3 | Patient F1 (learnt agg.) | vs paper AP |
+|---|---|---|---|---|---|
+| Wu et al. 2024 (paper FCOS) | 28.5 | — | — | — | baseline |
+| Our FCOS (Adam) | 35.3 | 86.5 | 40.2 | 62.9 | **+6.8** |
+| Our FCOS (paper SGD ablation) | 39.8 | 88.1 | 43.8 | 65.0 | **+11.3** |
+| Our RetinaNet | 41.2 | 89.1 | 49.7 | **67.3** | **+12.7** |
+| Our Faster R-CNN | **42.9** | 88.9 | 53.2 | 63.3 | **+14.4** |
+| WBF ensemble (FCOS + RetinaNet) | 42.0 | 87.5 | 63.0 | 65.0 | **+13.5** |
 
-Full discussion, mathematical derivations, training recipe, and ablations are in [`report/report.pdf`](report/report.pdf).
+**Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a $\alpha = 0.01$ family-wise cut only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the new numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
 
 ---
 
@@ -130,9 +130,10 @@ wait
 After `main.py --mode compare` has written `results/all_metrics.json`, run the analysis scripts in `scripts/` to (re)generate cached predictions, bootstrap CIs, FROC/calibration/sample plots, and the auto-generated tables:
 
 ```bash
-python scripts/cache_predictions.py        # writes results/predictions/*.pt
-python scripts/run_analyses.py             # bootstrap CIs, FROC, calibration, analyses.tex
-python scripts/generate_missing_plots.py   # legacy comparison plots from cached preds
+python scripts/cache_predictions.py             # writes results/predictions/*.pt
+python scripts/run_analyses.py                  # bootstrap CIs, FROC, calibration, analyses.tex
+python scripts/paired_bootstrap_extras.py       # 4 paired AP@0.5 tests, writes paired_extras.{json,tex}
+python scripts/generate_missing_plots.py        # legacy comparison plots from cached preds
 ```
 
 Then compile the LaTeX from the `report/` and `presentation/` directories (e.g. `pdflatex report.tex` run twice).
@@ -159,6 +160,7 @@ Then compile the LaTeX from the `report/` and `presentation/` directories (e.g. 
 | `calibration.{png,pdf}` | Reliability diagrams of patient-level max-scores; ECE in the legend. |
 | `ap_bootstrap.{png,pdf}` | AP@0.5 with 95% bootstrap CIs (per-patient resampling, n=500). |
 | `analyses.tex` | Auto-generated LaTeX tables: AP+CI / size-bucket / CPM and patient-level. |
+| `paired_extras.{tex,json}` | Auto-generated paired-bootstrap table on AP@0.5 differences (4 pairs, B=200, Bonferroni note in caption). |
 | `all_metrics.json` | Legacy machine-readable metrics (PR-curve points etc.). |
 | `all_metrics_v2.json` | New bootstrap-CI + calibration + FROC metrics. |
 | `{model}_history.json` | Per-epoch training history (loss, LR, val metrics, timing). |
@@ -207,6 +209,7 @@ pneumonia-detection-naml/
 ├── scripts/
 │   ├── cache_predictions.py        # Cache per-model val predictions to disk (.pt)
 │   ├── run_analyses.py             # Bootstrap CIs, FROC, calibration, paired tests
+│   ├── paired_bootstrap_extras.py  # 4 additional paired AP@0.5 tests (FCOS-SGD/Ensemble vs Retina/F-RCNN)
 │   ├── generate_missing_plots.py   # Legacy comparison plots from cached predictions
 │   ├── run_4gpu_pipeline.sh        # Parallel 4-GPU training driver (RunPod)
 │   ├── run_full_pipeline.sh        # Single-GPU end-to-end driver
