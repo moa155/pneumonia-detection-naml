@@ -17,6 +17,10 @@
 \usepackage{xcolor}
 \usepackage{microtype}
 \usepackage{textcomp}           % char-level kerning; eliminates most overfull hboxes
+\usepackage{etoolbox}           % \pretocmd, used to force every \section onto a new page
+
+% Force every top-level \section to start on a fresh page (subsections flow normally).
+\pretocmd{\section}{\clearpage}{}{}
 
 % Paths
 \graphicspath{{../results/}}
@@ -58,6 +62,9 @@ This report reproduces and extends the method proposed by Wu et al.~\cite{wu2024
 
 All detectors \emph{exceed} the paper's reported FCOS AP@0.5 of $28.5\%$: our FCOS (Adam) reaches $35.3\%$ ($+6.8$), FCOS with the paper's SGD recipe reaches $39.8\%$ ($+11.3$), RetinaNet reaches $41.2\%$ ($+12.7$), and Faster R-CNN reaches $42.9\%$ ($+14.4$). The central empirical finding is that, under a shared backbone and a shared \emph{Adam} recipe, the anchor-based detectors decisively outperform the anchor-free FCOS on box-level AP@0.5; switching FCOS to the paper's SGD recipe narrows but does \emph{not} close the gap to RetinaNet (Section~\ref{sec:robustness} reports the paired bootstrap on the per-patient difference). Crucially, this is an \emph{asymmetric} optimiser ablation --- we only re-trained FCOS under SGD --- so the result tightens the FCOS-vs-RetinaNet comparison without resolving the underlying paradigm-vs-optimiser confound. At the patient level, the WBF ensemble reaches F1 $63.0\%$ at the fixed threshold $\tau = 0.3$ used by the paper, which is $+13.5$ points above the best single model \emph{at that arbitrary cut}; this headline is largely a calibration artefact, as Section~\ref{sec:robustness} demonstrates by refitting a Youden-optimal threshold on a held-out calibration half and by training a $5$-fold-CV logistic aggregator on per-patient features. Under either fair protocol the ensemble's lead shrinks to $\le 1$ F1 point and is overtaken by RetinaNet (learnt aggregator F1 $67.3\%$, the single best patient-level number in the study). All point estimates carry two caveats that the bootstrap does not address: they come from a single training seed, so run-to-run noise is uncovered; and they are read at each detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on. We discuss both in Section~\ref{sec:limitations}.
 \end{abstract}
+
+\newpage
+\tableofcontents
 
 %==============================================================================
 \section{Introduction}
