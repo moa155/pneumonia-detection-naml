@@ -112,7 +112,7 @@ python main.py --mode compare  --data-dir data    # runs eval + ensemble + all p
 python main.py --mode visualize --data-dir data   # per-image detection overlays
 ```
 
-On 4× NVIDIA H100 80 GB SXM (RunPod), the full 4-model training (40 epochs each) finishes in **≈2.5 hours** with one model per GPU (total GPU cost ≈ \$30). The exact recipe used for the report is in `scripts/run_4gpu_pipeline.sh`:
+On 4× NVIDIA H100 80 GB SXM (RunPod), the full 4-model training (40 epochs each) finishes in **≈3.5 hours** with one model per GPU (total GPU cost ≈ \$30–40). The exact recipe used for the report is in `scripts/run_4gpu_pipeline.sh`:
 
 ```bash
 # Manual per-GPU launch (what was actually run for the report, on RunPod)
