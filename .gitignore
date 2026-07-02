@@ -23,6 +23,9 @@ results_pod/
 # Cached predictions tar
 predictions.tgz
 
+# Local study notes (personal, not for the repo)
+study/
+
 # Build / temp
 nohup.out
 training.log
@@ -33,3 +36,6 @@ docs/kaggle.json
 *.out
 *.snm
 *.toc
+
+# Claude Code local files
+.claude/
