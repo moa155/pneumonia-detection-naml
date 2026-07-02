@@ -14,7 +14,7 @@ Four detector variants are implemented and compared for pneumonia localisation o
 
 ## TL;DR
 
-Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (Faster R-CNN 42.9, RetinaNet 41.2 AP@0.5) beat the anchor-free FCOS, the **reverse** of the paper's paradigm ordering (their FCOS 48.6 > RetinaNet 45.8 > Faster R-CNN 36.5). We do **not** reproduce the paper's *absolute* numbers (their FCOS 48.6, proposed method 51.5): their reported recall (AR₁₀ ≈ 96–99) is far above ours (≈ 85) and no code/weights/split are released, so cross-paper AP is not directly comparable, the gap is one of **evaluation, not training**. The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a **calibration artefact**: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3%, the best patient-level number in the study.
+Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (Faster R-CNN 42.9, RetinaNet 41.2 AP@0.5) beat the anchor-free FCOS, the **reverse** of the paper's paradigm ordering (their FCOS 48.6 > RetinaNet 45.8 > Faster R-CNN 36.5). We do **not** reproduce the paper's *absolute* numbers (their FCOS 48.6, proposed method 51.5): their reported recall (AR₁₀ ≈ 96–98) is far above ours (≈ 85) and no code/weights/split are released, so cross-paper AP is not directly comparable, the gap is one of **evaluation, not training**. The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a **calibration artefact**: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3%, the best patient-level number in the study.
 
 | Model | AP@0.5 | ROC AUC | Patient F1 @ τ=0.3 | Patient F1 (learnt agg.) |
 |---|---|---|---|---|
@@ -23,12 +23,12 @@ Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (
 | Our RetinaNet | 41.2 | 89.1 | 49.7 | **67.3** |
 | Our Faster R-CNN | **42.9** | 88.9 | 53.2 | 63.3 |
 | WBF ensemble (FCOS + RetinaNet) | 42.0 | 87.5 | 63.0 | 65.0 |
-| *Wu et al., FCOS (their eval)* | *48.6* |, |, |, |
-| *Wu et al., proposed (their eval)* | *51.5* |, |, |, |
+| *Wu et al., FCOS (their eval)* | *48.6* | | | |
+| *Wu et al., proposed (their eval)* | *51.5* | | | |
 
-> **Note on the paper comparison.** The two *Wu et al.* rows are quoted from their Table 3 and were produced by the paper's own (unreleased) pipeline; their recall (AR₁₀ ≈ 96–99 vs. our ≈ 85) makes their absolute AP not directly comparable. The defensible, protocol-matched result is the *internal* one above, where anchor-based beats anchor-free, contradicting the paper's paradigm claim. Note also that the paper actually trains with **Adam** (lr 1e-3), so our *FCOS (Adam)* is the optimiser-faithful run; *FCOS (SGD)* is our own ablation.
+> **Note on the paper comparison.** The two *Wu et al.* rows are quoted from their Table 3 and were produced by the paper's own (unreleased) pipeline; their recall (AR₁₀ ≈ 96–98 vs. our ≈ 85) makes their absolute AP not directly comparable. The defensible, protocol-matched result is the *internal* one above, where anchor-based beats anchor-free, contradicting the paper's paradigm claim. Note also that the paper actually trains with **Adam** (lr 1e-3), so our *FCOS (Adam)* is the optimiser-faithful run; *FCOS (SGD)* is our own ablation.
 
-**Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a $\alpha = 0.01$ family-wise cut only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
+**Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a Bonferroni family-wise cut ($\alpha=0.0125$) only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
 
 ---
 
@@ -45,7 +45,7 @@ All four share the same **ResNet-50** backbone + **Feature Pyramid Network** so 
 
 ### Training pipeline (differences from the paper)
 
-- 40 epochs, batch 32 (FCOS/RetinaNet) and 16 (Faster R-CNN), image size 512, Adam peak `lr=1e-3` (with 2-epoch warm-up + cosine annealing), weight decay `1e-4`. The `fcos_paper` run instead uses **SGD** (momentum 0.9, lr `5e-3`, multi-step decay at epochs 24/32) as our own optimiser ablation. Note: Wu et al. themselves train with Adam (lr 1e-3), so the `fcos` (Adam) run is the optimiser-faithful reproduction.
+- 40 epochs, batch 32 (FCOS/RetinaNet) and 16 (Faster R-CNN), image size 512, Adam peak `lr=1e-3` (with 2-epoch warm-up + cosine annealing), weight decay `1e-4`. The `fcos_paper` run keeps this exact warm-up + cosine schedule and only swaps the optimiser to **SGD** (momentum 0.9, peak lr `5e-3`), so it is a clean Adam-vs-SGD ablation. Note: Wu et al. themselves train with Adam (lr 1e-3), so the `fcos` (Adam) run is the optimiser-faithful reproduction.
 - **BF16 mixed precision** on H100 Tensor Cores (no gradient scaler needed).
 - **Cosine LR annealing** with a 2-epoch linear warm-up.
 - **Exponential Moving Average (EMA)** of the weights, decay 0.999.
