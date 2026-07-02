@@ -37,5 +37,6 @@ docs/kaggle.json
 *.snm
 *.toc
 
-# Claude Code local files
-.claude/
+# Unused notebooks (all training was run on RunPod)
+Pneumonia_Detection_Colab.ipynb
+Pneumonia_Detection_Kaggle.ipynb
