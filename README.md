@@ -1,6 +1,6 @@
 # Pneumonia Detection: Anchor-Free vs. Anchor-Based Object Detection
 
-**NAML (Numerical Analysis for Machine Learning)** course project — Politecnico di Milano, academic year 2025/26.
+**NAML (Numerical Analysis for Machine Learning)** course project, Politecnico di Milano, academic year 2025/26.
 
 **Authors:** Mohamed Z. M. Mandour (`mohamedzeyad.mandour@mail.polimi.it`) and Elena Nuttini (`elena.nuttini@mail.polimi.it`).
 
@@ -8,13 +8,13 @@ This project reproduces and extends the method from:
 
 > Wu et al., *“Pneumonia detection based on RSNA dataset and anchor-free deep learning detector”*, **Scientific Reports** **14**, 1929 (2024). DOI: [10.1038/s41598-024-52156-7](https://doi.org/10.1038/s41598-024-52156-7).
 
-Four detector variants are implemented and compared for pneumonia localisation on chest X-rays from the **RSNA Pneumonia Detection Challenge**: anchor-free FCOS under a modern Adam recipe, the same FCOS retrained under an SGD recipe (our controlled optimiser ablation), and the two anchor-based baselines RetinaNet and Faster R-CNN — all under a shared ResNet-50 + FPN backbone and identical evaluation.
+Four detector variants are implemented and compared for pneumonia localisation on chest X-rays from the **RSNA Pneumonia Detection Challenge**: anchor-free FCOS under a modern Adam recipe, the same FCOS retrained under an SGD recipe (our controlled optimiser ablation), and the two anchor-based baselines RetinaNet and Faster R-CNN, all under a shared ResNet-50 + FPN backbone and identical evaluation.
 
 ---
 
 ## TL;DR
 
-Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (Faster R-CNN 42.9, RetinaNet 41.2 AP@0.5) beat the anchor-free FCOS — the **reverse** of the paper's paradigm ordering (their FCOS 48.6 > RetinaNet 45.8 > Faster R-CNN 36.5). We do **not** reproduce the paper's *absolute* numbers (their FCOS 48.6, proposed method 51.5): their reported recall (AR₁₀ ≈ 96–99) is far above ours (≈ 85) and no code/weights/split are released, so cross-paper AP is not directly comparable — the gap is one of **evaluation, not training**. The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a **calibration artefact**: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3% — the best patient-level number in the study.
+Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (Faster R-CNN 42.9, RetinaNet 41.2 AP@0.5) beat the anchor-free FCOS, the **reverse** of the paper's paradigm ordering (their FCOS 48.6 > RetinaNet 45.8 > Faster R-CNN 36.5). We do **not** reproduce the paper's *absolute* numbers (their FCOS 48.6, proposed method 51.5): their reported recall (AR₁₀ ≈ 96–99) is far above ours (≈ 85) and no code/weights/split are released, so cross-paper AP is not directly comparable, the gap is one of **evaluation, not training**. The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a **calibration artefact**: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3%, the best patient-level number in the study.
 
 | Model | AP@0.5 | ROC AUC | Patient F1 @ τ=0.3 | Patient F1 (learnt agg.) |
 |---|---|---|---|---|
@@ -23,10 +23,10 @@ Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (
 | Our RetinaNet | 41.2 | 89.1 | 49.7 | **67.3** |
 | Our Faster R-CNN | **42.9** | 88.9 | 53.2 | 63.3 |
 | WBF ensemble (FCOS + RetinaNet) | 42.0 | 87.5 | 63.0 | 65.0 |
-| *Wu et al. — FCOS (their eval)* | *48.6* | — | — | — |
-| *Wu et al. — proposed (their eval)* | *51.5* | — | — | — |
+| *Wu et al., FCOS (their eval)* | *48.6* |, |, |, |
+| *Wu et al., proposed (their eval)* | *51.5* |, |, |, |
 
-> **Note on the paper comparison.** The two *Wu et al.* rows are quoted from their Table 3 and were produced by the paper's own (unreleased) pipeline; their recall (AR₁₀ ≈ 96–99 vs. our ≈ 85) makes their absolute AP not directly comparable. The defensible, protocol-matched result is the *internal* one above — where anchor-based beats anchor-free, contradicting the paper's paradigm claim. Note also that the paper actually trains with **Adam** (lr 1e-3), so our *FCOS (Adam)* is the optimiser-faithful run; *FCOS (SGD)* is our own ablation.
+> **Note on the paper comparison.** The two *Wu et al.* rows are quoted from their Table 3 and were produced by the paper's own (unreleased) pipeline; their recall (AR₁₀ ≈ 96–99 vs. our ≈ 85) makes their absolute AP not directly comparable. The defensible, protocol-matched result is the *internal* one above, where anchor-based beats anchor-free, contradicting the paper's paradigm claim. Note also that the paper actually trains with **Adam** (lr 1e-3), so our *FCOS (Adam)* is the optimiser-faithful run; *FCOS (SGD)* is our own ablation.
 
 **Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a $\alpha = 0.01$ family-wise cut only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
 
@@ -49,10 +49,10 @@ All four share the same **ResNet-50** backbone + **Feature Pyramid Network** so 
 - **BF16 mixed precision** on H100 Tensor Cores (no gradient scaler needed).
 - **Cosine LR annealing** with a 2-epoch linear warm-up.
 - **Exponential Moving Average (EMA)** of the weights, decay 0.999.
-- **Medical-imaging augmentation** (CLAHE, RandomBrightnessContrast, Gamma, Affine, GridDistortion, CoarseDropout, horizontal flip — no vertical flip).
+- **Medical-imaging augmentation** (CLAHE, RandomBrightnessContrast, Gamma, Affine, GridDistortion, CoarseDropout, horizontal flip, no vertical flip).
 - **Weighted sampler** with 3× oversampling of positive patients.
 - **Backbone frozen for the first 3 epochs** to stabilise early training.
-- **Validation every 4 epochs** (10 validations over the 40-epoch run) with early-stopping patience of 5 — not triggered in the final run.
+- **Validation every 4 epochs** (10 validations over the 40-epoch run) with early-stopping patience of 5, not triggered in the final run.
 - **Test-time augmentation** (horizontal flip averaging) + **Gaussian Soft-NMS** (σ = 0.5) at evaluation.
 - **Weighted Box Fusion (WBF)** ensemble of FCOS + RetinaNet with IoU = 0.55.
 
@@ -66,7 +66,7 @@ All four share the same **ResNet-50** backbone + **Feature Pyramid Network** so 
 
 ## Dataset
 
-**RSNA Pneumonia Detection Challenge** (Kaggle, 2018) — 26,684 chest X-rays (1024×1024 DICOM), ≈22% positive.
+**RSNA Pneumonia Detection Challenge** (Kaggle, 2018), 26,684 chest X-rays (1024×1024 DICOM), ≈22% positive.
 
 ### Download (Kaggle CLI)
 
@@ -123,7 +123,7 @@ python main.py --mode train --model faster_rcnn --device cuda:3 --batch-size 16 
 wait
 ```
 
-All experiments were run on **RunPod.io** cloud GPUs — not on Kaggle or Colab.
+All experiments were run on **RunPod.io** cloud GPUs, not on Kaggle or Colab.
 
 ### Finalising the report from results
 
@@ -226,8 +226,8 @@ pneumonia-detection-naml/
 │   ├── Pneumonia_detection.pdf     # Reference paper (Wu et al., 2024)
 │   └── logo_polimi.png             # Politecnico di Milano logo (title pages)
 ├── results/                        # Committed: plots, metrics, history JSONs, cached predictions
-├── data/                           # RSNA dataset (gitignored — download separately)
-└── checkpoints/                    # Trained weights (gitignored — see GitHub Release v1.0)
+├── data/                           # RSNA dataset (gitignored, download separately)
+└── checkpoints/                    # Trained weights (gitignored, see GitHub Release v1.0)
 ```
 
 ---

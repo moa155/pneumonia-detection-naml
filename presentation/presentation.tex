@@ -71,7 +71,7 @@
       \end{enumerate}
   \end{columns}
   \vfill
-  \footnotesize\textit{Take-home message: the contribution is \hl{methodological} --- a fair,
+  \footnotesize\textit{Take-home message: the contribution is \hl{methodological}, a fair,
   statistically honest comparison, not a new state-of-the-art model.}
 \end{frame}
 
@@ -81,7 +81,7 @@
     \column{0.58\textwidth}
       \textbf{Task: object detection, not classification}
       \begin{itemize}\small
-        \item Not ``is there pneumonia?'' but \hl{where} --- predict bounding boxes + confidence.
+        \item Not ``is there pneumonia?'' but \hl{where}, predict bounding boxes + confidence.
         \item Opacities are subtle, variable in shape, overlapping.
       \end{itemize}
       \vspace{0.6em}
@@ -124,7 +124,7 @@
       \vspace{0.5em}
       \begin{block}{\small Our research question}
         \small But they compare against baselines run with \emph{their own} pipeline (no code
-        released). \hl{At a shared backbone, recipe and evaluation --- who really wins?}
+        released). \hl{At a shared backbone, recipe and evaluation, who really wins?}
       \end{block}
   \end{columns}
 \end{frame}
@@ -184,7 +184,7 @@
 \end{frame}
 
 %------------------------------------------------------------------------------
-\begin{frame}{Numerical Analysis --- the NAML core (1/2)}
+\begin{frame}{Numerical Analysis, the NAML core (1/2)}
   \small
   \begin{block}{\small EMA of weights = a linear low-pass (FIR) filter}
     \small
@@ -205,7 +205,7 @@
 \end{frame}
 
 %------------------------------------------------------------------------------
-\begin{frame}{Numerical Analysis --- the NAML core (2/2)}
+\begin{frame}{Numerical Analysis, the NAML core (2/2)}
   \small
   \begin{block}{\small Cosine annealing with warm-up}
     \small
@@ -216,8 +216,7 @@
   \begin{block}{\small Bootstrap confidence intervals: Monte-Carlo convergence}
     \small
     Quantile MC error decays as $O(1/\sqrt B)$:
-    $\mathrm{SE}_{0.975}\approx \tfrac{1}{f(q)}\sqrt{\tfrac{p(1-p)}{B}}\approx 0.19$\,AP at $B=200$
-    --- well below our $\sim$1\,AP resolution. CI \emph{width} is set by patient variance, not by $B$.
+    $\mathrm{SE}_{0.975}\approx \tfrac{1}{f(q)}\sqrt{\tfrac{p(1-p)}{B}}\approx 0.19$\,AP at $B=200$, well below our $\sim$1\,AP resolution. CI \emph{width} is set by patient variance, not by $B$.
   \end{block}
   \centering
   \includegraphics[height=0.30\textheight]{val_ap_over_epochs.png}
@@ -245,7 +244,7 @@
   \vspace{0.6em}
   \begin{block}{\small Why so many metrics?}
     \small Because a single fixed-threshold number can be dominated by \hl{score calibration}
-    rather than detection quality --- the central subtlety of our results.
+    rather than detection quality, the central subtlety of our results.
   \end{block}
 \end{frame}
 
@@ -262,14 +261,14 @@
     \textbf{Faster R-CNN} & \textbf{42.9} [40.0, 46.3] & 88.9 & \textbf{our best} \\
     Ensemble (FCOS+Retina, WBF) & 42.0 [39.2, 45.6] & 87.5 & \\
     \midrule
-    \textit{Wu et al.\ --- FCOS} & \textit{48.6} & -- & \textit{their eval} \\
-    \textit{Wu et al.\ --- proposed} & \textit{51.5} & -- & \textit{their eval} \\
+    \textit{Wu et al.\, FCOS} & \textit{48.6} & -- & \textit{their eval} \\
+    \textit{Wu et al.\, proposed} & \textit{51.5} & -- & \textit{their eval} \\
     \bottomrule
   \end{tabular}
   \vspace{0.5em}
   \begin{itemize}\small
     \item In \emph{our} controlled setup: \hl{anchor-based $>$ anchor-free} (Faster R-CNN, RetinaNet
-      top FCOS) --- the \hl{reverse} of the paper's ordering.
+      top FCOS), the \hl{reverse} of the paper's ordering.
     \item ROC AUC lies in a \hl{tight 86.5--89.1\%} band: true ranking quality is similar.
   \end{itemize}
 \end{frame}
@@ -277,7 +276,7 @@
 %------------------------------------------------------------------------------
 \begin{frame}{The Honest Paper Comparison}
   \small
-  \begin{alertblock}{\small We do NOT beat the paper's absolute numbers --- and we say so}
+  \begin{alertblock}{\small We do NOT beat the paper's absolute numbers, and we say so}
     \small Our best is 42.9; the paper reports FCOS 48.6 and 51.5 for its method.
   \end{alertblock}
   \textbf{Why? An evaluation gap, not a training gap:}
@@ -288,7 +287,7 @@
     \item No code, weights or split released $\Rightarrow$ protocols cannot be aligned.
   \end{itemize}
   \begin{block}{\small The defensible claim}
-    \small The only protocol-matched comparison is the \hl{internal} one --- and there the
+    \small The only protocol-matched comparison is the \hl{internal} one, and there the
     paradigm ordering \hl{reverses} relative to the paper. That is our contribution.
   \end{block}
 \end{frame}
@@ -359,7 +358,7 @@
   \small
   \begin{enumerate}\setlength\itemsep{0.45em}
     \item Under a \hl{shared backbone, recipe and evaluation}, anchor-based detectors beat
-      anchor-free FCOS on AP@0.5 --- the \hl{reverse} of the paper's paradigm claim.
+      anchor-free FCOS on AP@0.5, the \hl{reverse} of the paper's paradigm claim.
     \item We do \emph{not} reproduce the paper's absolute numbers; the gap is one of
       \hl{evaluation} (recall $\sim$96--99 vs.\ 85), not training.
     \item The ensemble's patient-level ``win'' is a \hl{calibration artefact}: at a fair operating
