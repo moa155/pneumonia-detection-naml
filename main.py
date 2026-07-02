@@ -698,9 +698,9 @@ def parse_args():
     parser.add_argument("--pos-weight", type=float, default=3.0,
                         help="Weight for positive patients in sampler (default: 3.0)")
 
-    # Optimizer + paper-recipe ablation
+    # Optimizer (Adam is default and paper-faithful; SGD is our own ablation)
     parser.add_argument("--optimizer", choices=["adam", "sgd"], default="adam",
-                        help="Optimizer (default adam; paper FCOS uses sgd)")
+                        help="Optimizer (default adam, matching Wu et al.; sgd = our ablation)")
     parser.add_argument("--momentum", type=float, default=0.9,
                         help="SGD momentum (default 0.9)")
     parser.add_argument("--checkpoint-suffix", default="",

@@ -37,7 +37,7 @@ from src.ensemble import ensemble_predictions
 
 MODEL_NAMES = ["fcos", "fcos_paper", "retinanet", "faster_rcnn"]
 MODEL_LABELS = {
-    "fcos": "FCOS", "fcos_paper": "FCOS (paper SGD)",
+    "fcos": "FCOS", "fcos_paper": "FCOS (SGD)",
     "retinanet": "RetinaNet",
     "faster_rcnn": "Faster R-CNN", "ensemble": "Ensemble (FCOS+Retina, WBF)",
 }

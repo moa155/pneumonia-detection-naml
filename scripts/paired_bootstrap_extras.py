@@ -2,7 +2,7 @@
 """Extra paired-bootstrap tests on cached predictions.
 
 Runs three paired bootstraps on AP@0.5 differences:
-  (1) FCOS (paper SGD) - RetinaNet
+  (1) FCOS (SGD) - RetinaNet
   (2) Ensemble (FCOS+RetinaNet WBF) - RetinaNet
   (3) Ensemble (FCOS+RetinaNet WBF) - Faster R-CNN
 
@@ -58,10 +58,10 @@ def main():
 
     # Emit a LaTeX fragment for the report
     labels = {
-        "fcos_paper_vs_retinanet": ("FCOS (paper SGD)", "RetinaNet"),
+        "fcos_paper_vs_retinanet": ("FCOS (SGD)", "RetinaNet"),
         "ensemble_vs_retinanet": ("Ensemble (FCOS+Retina)", "RetinaNet"),
         "ensemble_vs_faster_rcnn": ("Ensemble (FCOS+Retina)", "Faster R-CNN"),
-        "fcos_paper_vs_faster_rcnn": ("FCOS (paper SGD)", "Faster R-CNN"),
+        "fcos_paper_vs_faster_rcnn": ("FCOS (SGD)", "Faster R-CNN"),
     }
     tex_path = Path(args.out).parent / "paired_extras.tex"
     rows = []

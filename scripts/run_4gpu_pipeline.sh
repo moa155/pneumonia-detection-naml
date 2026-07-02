@@ -6,7 +6,7 @@
 #   GPU0: FCOS              (Adam, our baseline recipe)
 #   GPU1: RetinaNet         (Adam)
 #   GPU2: Faster R-CNN      (Adam)
-#   GPU3: FCOS paper SGD    (SGD+momentum, paper's ablation)
+#   GPU3: FCOS SGD ablation (our Adam-vs-SGD optimiser ablation)
 #
 # Then sequentially: cache predictions -> run robustness analyses.
 #
@@ -29,7 +29,7 @@ NUM_WORKERS="${NUM_WORKERS:-8}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 SEED="${SEED:-42}"
 
-# Paper recipe overrides for fcos_paper
+# SGD-ablation overrides for the fcos_paper run (our ablation; paper uses Adam)
 PAPER_LR="${PAPER_LR:-5e-3}"
 PAPER_WD="${PAPER_WD:-1.6e-4}"
 PAPER_MOM="${PAPER_MOM:-0.9}"
@@ -106,7 +106,7 @@ if [ "$SKIP_TRAIN" -eq 0 ]; then
             > results/train_faster_rcnn.log 2>&1 ) &
     PIDS+=($!)
 
-    # GPU3: FCOS paper SGD ablation
+    # GPU3: FCOS with SGD (our optimiser ablation; paper itself uses Adam)
     ( CUDA_VISIBLE_DEVICES=3 python -u main.py \
             $COMMON_FLAGS \
             --model fcos --lr $PAPER_LR --optimizer sgd --momentum $PAPER_MOM \

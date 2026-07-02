@@ -8,24 +8,27 @@ This project reproduces and extends the method from:
 
 > Wu et al., *“Pneumonia detection based on RSNA dataset and anchor-free deep learning detector”*, **Scientific Reports** **14**, 1929 (2024). DOI: [10.1038/s41598-024-52156-7](https://doi.org/10.1038/s41598-024-52156-7).
 
-Four detector variants are implemented and compared for pneumonia localisation on chest X-rays from the **RSNA Pneumonia Detection Challenge**: anchor-free FCOS under our modern Adam recipe, the same FCOS retrained under the paper's original SGD recipe (controlled ablation), and the two anchor-based baselines RetinaNet and Faster R-CNN.
+Four detector variants are implemented and compared for pneumonia localisation on chest X-rays from the **RSNA Pneumonia Detection Challenge**: anchor-free FCOS under a modern Adam recipe, the same FCOS retrained under an SGD recipe (our controlled optimiser ablation), and the two anchor-based baselines RetinaNet and Faster R-CNN — all under a shared ResNet-50 + FPN backbone and identical evaluation.
 
 ---
 
 ## TL;DR
 
-All detectors surpass the paper's reported FCOS AP@0.5 of 28.5%. Under a shared Adam recipe the anchor-based detectors decisively win on AP@0.5; switching FCOS to the paper's SGD recipe narrows but does not close the gap to RetinaNet (paired-bootstrap difference $-1.38$ AP, 95% CI $[-3.49, +0.59]$, $p = 0.180$). The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a calibration artefact: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3% — the best patient-level number in the study.
+Under a shared backbone, recipe and evaluation, the **anchor-based** detectors (Faster R-CNN 42.9, RetinaNet 41.2 AP@0.5) beat the anchor-free FCOS — the **reverse** of the paper's paradigm ordering (their FCOS 48.6 > RetinaNet 45.8 > Faster R-CNN 36.5). We do **not** reproduce the paper's *absolute* numbers (their FCOS 48.6, proposed method 51.5): their reported recall (AR₁₀ ≈ 96–99) is far above ours (≈ 85) and no code/weights/split are released, so cross-paper AP is not directly comparable — the gap is one of **evaluation, not training**. The Weighted Box Fusion ensemble reaches patient F1 = 63.0% at the fixed τ = 0.3 threshold used in the paper, but this headline is largely a **calibration artefact**: under a fair per-detector operating point (Youden threshold on a held-out calibration half, or a learnt 5-fold-CV aggregator on per-patient features), the single-model RetinaNet reaches F1 = 67.3% — the best patient-level number in the study.
 
-| Model | AP@0.5 | ROC AUC | Patient F1 @ τ=0.3 | Patient F1 (learnt agg.) | vs paper AP |
-|---|---|---|---|---|---|
-| Wu et al. 2024 (paper FCOS) | 28.5 | — | — | — | baseline |
-| Our FCOS (Adam) | 35.3 | 86.5 | 40.2 | 62.9 | **+6.8** |
-| Our FCOS (paper SGD ablation) | 39.8 | 88.1 | 43.8 | 65.0 | **+11.3** |
-| Our RetinaNet | 41.2 | 89.1 | 49.7 | **67.3** | **+12.7** |
-| Our Faster R-CNN | **42.9** | 88.9 | 53.2 | 63.3 | **+14.4** |
-| WBF ensemble (FCOS + RetinaNet) | 42.0 | 87.5 | 63.0 | 65.0 | **+13.5** |
+| Model | AP@0.5 | ROC AUC | Patient F1 @ τ=0.3 | Patient F1 (learnt agg.) |
+|---|---|---|---|---|
+| Our FCOS (Adam) | 35.3 | 86.5 | 40.2 | 62.9 |
+| Our FCOS (SGD ablation) | 39.8 | 88.1 | 43.8 | 65.0 |
+| Our RetinaNet | 41.2 | 89.1 | 49.7 | **67.3** |
+| Our Faster R-CNN | **42.9** | 88.9 | 53.2 | 63.3 |
+| WBF ensemble (FCOS + RetinaNet) | 42.0 | 87.5 | 63.0 | 65.0 |
+| *Wu et al. — FCOS (their eval)* | *48.6* | — | — | — |
+| *Wu et al. — proposed (their eval)* | *51.5* | — | — | — |
 
-**Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a $\alpha = 0.01$ family-wise cut only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the new numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
+> **Note on the paper comparison.** The two *Wu et al.* rows are quoted from their Table 3 and were produced by the paper's own (unreleased) pipeline; their recall (AR₁₀ ≈ 96–99 vs. our ≈ 85) makes their absolute AP not directly comparable. The defensible, protocol-matched result is the *internal* one above — where anchor-based beats anchor-free, contradicting the paper's paradigm claim. Note also that the paper actually trains with **Adam** (lr 1e-3), so our *FCOS (Adam)* is the optimiser-faithful run; *FCOS (SGD)* is our own ablation.
+
+**Caveats.** All numbers come from a single training seed per detector; the bootstrap CIs capture variance over validation-patient resampling only, not run-to-run optimisation noise (typically $\pm 1$–$2$ AP for detection). Each AP@0.5 is read at that detector's best-validation EMA checkpoint, on the same split the bootstrap CIs are computed on (selection-on-val). Four paired pairwise tests are reported with no Holm/Bonferroni correction; under a $\alpha = 0.01$ family-wise cut only Faster R-CNN $>$ FCOS-SGD ($-3.07$ AP, $p < 0.001$) survives. Full discussion, mathematical derivations, statistical caveats and the numerical-analysis section are in [`report/report.pdf`](report/report.pdf).
 
 ---
 
@@ -34,7 +37,7 @@ All detectors surpass the paper's reported FCOS AP@0.5 of 28.5%. Under a shared 
 | # | Model | Type | Role |
 |---|-------|------|------|
 | 1 | **FCOS** | Anchor-free, one-stage | Paper's proposed method. Per-pixel prediction + center-ness branch + focal loss on FPN. |
-| 2 | **FCOS (paper SGD)** | Anchor-free, one-stage | Same FCOS head, retrained with the paper's exact SGD recipe as an ablation. |
+| 2 | **FCOS (SGD)** | Anchor-free, one-stage | Same FCOS head, retrained with an SGD+momentum recipe as our own optimiser ablation (the paper itself uses Adam). |
 | 3 | **RetinaNet** | Anchor-based, one-stage | Comparison from paper Table 3. 9 anchors/location, focal loss, GIoU regression (v2). |
 | 4 | **Faster R-CNN** | Anchor-based, two-stage | Comparison from paper Table 3. RPN proposals + ROI Align + per-class head (v2). |
 
@@ -42,7 +45,7 @@ All four share the same **ResNet-50** backbone + **Feature Pyramid Network** so 
 
 ### Training pipeline (differences from the paper)
 
-- 40 epochs, batch 32 (FCOS/RetinaNet) and 16 → 32 (Faster R-CNN), image size 512, Adam peak `lr=1e-3` (with 2-epoch warm-up + cosine annealing), weight decay `1e-4`. The `fcos_paper` ablation instead uses **SGD** (momentum 0.9, lr `1e-2`, multi-step decay) reproducing the paper's exact recipe.
+- 40 epochs, batch 32 (FCOS/RetinaNet) and 16 (Faster R-CNN), image size 512, Adam peak `lr=1e-3` (with 2-epoch warm-up + cosine annealing), weight decay `1e-4`. The `fcos_paper` run instead uses **SGD** (momentum 0.9, lr `5e-3`, multi-step decay at epochs 24/32) as our own optimiser ablation. Note: Wu et al. themselves train with Adam (lr 1e-3), so the `fcos` (Adam) run is the optimiser-faithful reproduction.
 - **BF16 mixed precision** on H100 Tensor Cores (no gradient scaler needed).
 - **Cosine LR annealing** with a 2-epoch linear warm-up.
 - **Exponential Moving Average (EMA)** of the weights, decay 0.999.
@@ -109,21 +112,18 @@ python main.py --mode compare  --data-dir data    # runs eval + ensemble + all p
 python main.py --mode visualize --data-dir data   # per-image detection overlays
 ```
 
-On 4× NVIDIA H100 80 GB SXM (RunPod), the full 4-model training (40 epochs each) finishes in **≈3 hours** with one model per GPU. The exact recipe used for the report is in `scripts/run_4gpu_pipeline.sh`:
+On 4× NVIDIA H100 80 GB SXM (RunPod), the full 4-model training (40 epochs each) finishes in **≈2.5 hours** with one model per GPU (total GPU cost ≈ \$30). The exact recipe used for the report is in `scripts/run_4gpu_pipeline.sh`:
 
 ```bash
-# Manual per-GPU launch (what was actually run for the report)
-python main.py --mode train --model fcos        --device cuda:0 --batch-size 32 --epochs 40 --bf16 &
-python main.py --mode train --model fcos_paper  --device cuda:1 --batch-size 32 --epochs 40 --bf16 --optimizer sgd &
+# Manual per-GPU launch (what was actually run for the report, on RunPod)
+python main.py --mode train --model fcos        --device cuda:0 --batch-size 32 --epochs 40 --bf16 &                       # Adam (paper-faithful optimiser)
+python main.py --mode train --model fcos_paper  --device cuda:1 --batch-size 32 --epochs 40 --bf16 --optimizer sgd --lr 5e-3 &  # our SGD ablation
 python main.py --mode train --model retinanet   --device cuda:2 --batch-size 32 --epochs 40 --bf16 &
-python main.py --mode train --model faster_rcnn --device cuda:3 --batch-size 32 --epochs 40 --bf16 &
+python main.py --mode train --model faster_rcnn --device cuda:3 --batch-size 16 --epochs 40 --bf16 &
 wait
 ```
 
-### Notebook variants
-
-- `Pneumonia_Detection_Kaggle.ipynb` — Kaggle T4 × 2 notebook (free tier).
-- `Pneumonia_Detection_Colab.ipynb` — Google Colab notebook.
+All experiments were run on **RunPod.io** cloud GPUs — not on Kaggle or Colab.
 
 ### Finalising the report from results
 
@@ -190,8 +190,6 @@ pneumonia-detection-naml/
 ├── regenerate_plots.py             # Re-evaluate + re-plot from existing checkpoints
 ├── requirements.txt                # Python dependencies
 ├── README.md                       # this file
-├── Pneumonia_Detection_Kaggle.ipynb  # Kaggle notebook (T4 × 2, free)
-├── Pneumonia_Detection_Colab.ipynb   # Google Colab notebook
 ├── src/
 │   ├── config.py                   # Configuration dataclass
 │   ├── dataset.py                  # RSNA dataset loader (DICOM + PNG)
@@ -217,8 +215,7 @@ pneumonia-detection-naml/
 │   ├── cloud_setup.sh              # RunPod / Vast.ai bootstrap (Kaggle creds, pip deps)
 │   ├── status.sh                   # Read-only training/disk/backup status report
 │   ├── watchdog_backup.sh          # Periodic upload of artefacts to litterbox (offsite)
-│   ├── smoke_check.py              # Fast sanity check of dataset + model + 1 train step
-│   └── finalize_tex.py             # Populate report/presentation tables from metrics JSON
+│   └── smoke_check.py              # Fast sanity check of dataset + model + 1 train step
 ├── report/
 │   ├── report.tex                  # Full report (LaTeX source)
 │   └── report.pdf                  # Compiled output

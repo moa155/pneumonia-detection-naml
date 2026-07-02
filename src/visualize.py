@@ -26,7 +26,7 @@ MODEL_COLORS = {
 }
 MODEL_LABELS = {
     "fcos": "FCOS",
-    "fcos_paper": "FCOS (paper SGD)",
+    "fcos_paper": "FCOS (SGD)",
     "retinanet": "RetinaNet",
     "faster_rcnn": "Faster R-CNN",
     "ensemble": "Ensemble (FCOS+RetinaNet, WBF)",
