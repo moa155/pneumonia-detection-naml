@@ -40,3 +40,6 @@ docs/kaggle.json
 # Unused notebooks (all training was run on RunPod)
 Pneumonia_Detection_Colab.ipynb
 Pneumonia_Detection_Kaggle.ipynb
+
+# Presentation (not tracked)
+presentation/
