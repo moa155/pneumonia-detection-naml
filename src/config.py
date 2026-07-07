@@ -1,4 +1,4 @@
-"""Configuration for pneumonia detection experiments."""
+"""Experiment config."""
 
 import os
 from dataclasses import dataclass
@@ -10,78 +10,78 @@ import torch
 
 @dataclass
 class Config:
-    # --- Paths ---
+    # paths
     data_dir: str = "data"
     output_dir: str = "results"
     checkpoint_dir: str = "checkpoints"
 
-    # Dataset files (RSNA Pneumonia Detection Challenge)
+    # RSNA challenge files
     train_csv: str = "stage_2_train_labels.csv"
     detail_csv: str = "stage_2_detailed_class_info.csv"
     train_images_dir: str = "stage_2_train_images"
 
-    # --- Dataset ---
+    # dataset
     val_split: float = 0.2
     seed: int = 42
-    max_samples: Optional[int] = None  # Limit number of patients (None = use all)
+    max_samples: Optional[int] = None  # None = all patients
 
-    # --- Training ---
+    # training
     batch_size: int = 4
-    num_workers: int = -1  # -1 = auto-detect based on CPU cores
-    num_epochs: int = 20
-    learning_rate: float = 1e-3  # paper uses SGD with lr=0.001
+    num_workers: int = -1  # -1 -> auto
+    num_epochs: int = 40
+    learning_rate: float = 1e-3
     lr_milestones: tuple = (12, 16)
     lr_gamma: float = 0.1
     weight_decay: float = 1e-4
     momentum: float = 0.9
 
-    # --- Model ---
-    num_classes: int = 2  # background + pneumonia
+    # model
+    num_classes: int = 2  # bg + pneumonia
     pretrained_backbone: bool = True
 
-    # --- Detection ---
+    # detection
     nms_threshold: float = 0.5
     score_threshold: float = 0.05
-    patient_threshold: float = 0.3  # confidence threshold for patient-level classification
+    patient_threshold: float = 0.3  # patient-level cutoff
 
-    # --- Data augmentation ---
+    # augmentation
     use_augmentation: bool = True
     image_min_size: int = 512
     image_max_size: int = 512
 
-    # --- Performance ---
-    force_device: Optional[str] = None  # None = auto-detect, "cpu", "cuda", "mps"
-    use_amp: bool = True  # Automatic Mixed Precision (CUDA only)
-    use_bf16: bool = False  # Use BFloat16 instead of Float16 (Ampere+ GPUs)
-    num_threads: int = 0  # OpenMP threads (0 = auto)
-    use_compile: bool = True  # torch.compile() for 20-40% speedup (PyTorch 2.x)
-    prefetch_factor: int = 4  # DataLoader prefetch (batches per worker)
+    # performance
+    force_device: Optional[str] = None  # None = auto
+    use_amp: bool = True  # CUDA only
+    use_bf16: bool = False  # bf16 instead of fp16 (Ampere+)
+    num_threads: int = 0
+    use_compile: bool = True  # torch.compile, PyTorch 2.x
+    prefetch_factor: int = 4
 
-    # --- Resume & Efficiency ---
-    resume: bool = False  # Resume training from last checkpoint
-    val_frequency: int = 2  # Validate every N epochs (1=every epoch)
-    early_stopping_patience: int = 5  # Stop after N validations without improvement (0=disabled)
+    # resume / efficiency
+    resume: bool = False
+    val_frequency: int = 4  # validate every N epochs
+    early_stopping_patience: int = 5  # 0 = off
 
-    # --- Advanced Training ---
-    freeze_backbone_epochs: int = 3  # Freeze early ResNet layers for N epochs (0=disabled)
-    use_ema: bool = True  # Exponential Moving Average of model weights
-    ema_decay: float = 0.999  # EMA decay factor
-    scheduler_type: str = "cosine"  # "cosine" or "step" (paper uses step decay)
-    gradient_accumulation: int = 1  # Effective batch = batch_size * accumulation
-    multi_scale: bool = False  # Random multi-scale training [448..576]
+    # advanced training
+    freeze_backbone_epochs: int = 3  # freeze early ResNet layers, 0 = off
+    use_ema: bool = True
+    ema_decay: float = 0.999  # EMA decay
+    scheduler_type: str = "cosine"  # cosine | step
+    gradient_accumulation: int = 1
+    multi_scale: bool = False
 
-    # --- Advanced Evaluation ---
-    use_tta: bool = True  # Test-time augmentation (horizontal flip)
-    use_soft_nms: bool = True  # Gaussian Soft-NMS instead of hard NMS
+    # advanced eval
+    use_tta: bool = True  # hflip TTA
+    use_soft_nms: bool = True
 
-    # --- Advanced Data ---
-    use_weighted_sampler: bool = True  # Oversample positive patients
-    positive_sample_weight: float = 3.0  # Weight multiplier for positive patients
+    # advanced data
+    use_weighted_sampler: bool = True
+    positive_sample_weight: float = 3.0  # oversample positives 3x
 
-    # --- Optimizer + paper-recipe ablation ---
-    optimizer_type: str = "adam"       # "adam" (default) or "sgd" (FCOS paper)
-    momentum: float = 0.9              # SGD momentum
-    checkpoint_suffix: str = ""        # Appended to checkpoint filenames (e.g. "_paper")
+    # optimizer / ablation
+    optimizer_type: str = "adam"       # adam | sgd (paper recipe)
+    momentum: float = 0.9
+    checkpoint_suffix: str = ""        # e.g. "_paper"
 
     @property
     def device(self) -> torch.device:
@@ -97,13 +97,11 @@ class Config:
     def effective_num_workers(self) -> int:
         if self.num_workers >= 0:
             return self.num_workers
-        # Auto-detect: use min(4, cpu_count) for good default
         cpu_count = os.cpu_count() or 1
         return min(4, cpu_count)
 
     @property
     def pin_memory(self) -> bool:
-        """Enable pin_memory for CUDA and MPS devices."""
         return self.device.type in ("cuda", "mps")
 
     @property

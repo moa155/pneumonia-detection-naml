@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
-"""Pneumonia Detection: Anchor-Free vs. Anchor-Based Object Detection.
+"""Anchor-free (FCOS) vs anchor-based (RetinaNet, Faster R-CNN) on RSNA.
 
-Reproduces and extends the method from:
-  Wu et al., "Pneumonia detection based on RSNA dataset and anchor-free
-  deep learning detector", Scientific Reports (2024).
+Follows Wu et al., Scientific Reports (2024). All models: ResNet-50 + FPN.
 
-Three detection models are compared:
-  1. FCOS  — anchor-free detector (paper's proposed method)
-  2. RetinaNet — one-stage, anchor-based (comparison from paper Table 3)
-  3. Faster R-CNN — two-stage, anchor-based (comparison from paper Table 3)
-
-All models use a ResNet-50 backbone with Feature Pyramid Network (FPN).
-
-Usage:
+  python main.py --mode full          # train + evaluate + compare
   python main.py --mode train --model all
   python main.py --mode evaluate --model all
   python main.py --mode compare
-  python main.py --mode full          # train + evaluate + compare (all models)
-  python main.py --mode visualize     # detection visualization on samples
+  python main.py --mode visualize
 """
 
 import argparse
@@ -45,17 +35,13 @@ from src.visualize import generate_all_plots
 MODELS = ["fcos", "retinanet", "faster_rcnn"]
 
 
-# ── GPU discovery ──────────────────────────────────────────────────────
-
 def discover_gpus() -> list:
-    """Return list of available CUDA device indices."""
     if not torch.cuda.is_available():
         return []
     return list(range(torch.cuda.device_count()))
 
 
 def print_gpu_info(gpu_ids: list):
-    """Print info about all available GPUs."""
     if not gpu_ids:
         device = "MPS" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "CPU"
         print(f"No CUDA GPUs found. Using {device}.")
@@ -67,36 +53,30 @@ def print_gpu_info(gpu_ids: list):
         print(f"  GPU {idx}: {props.name} ({mem_gb:.1f} GB)")
 
 
-# ── Seed ───────────────────────────────────────────────────────────────
-
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.benchmark = True   # auto-tune convolution algorithms
-        torch.backends.cuda.matmul.allow_tf32 = True   # TF32 matmul (Turing+)
-        torch.backends.cudnn.allow_tf32 = True          # TF32 convolutions (Turing+)
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True   # TF32 (Turing+)
+        torch.backends.cudnn.allow_tf32 = True
     if hasattr(torch, "mps") and hasattr(torch.mps, "manual_seed"):
         torch.mps.manual_seed(seed)
 
 
-# ── Data ───────────────────────────────────────────────────────────────
-
 def build_data_loaders(config: Config):
-    """Create train/val data loaders from the RSNA dataset."""
     df = load_rsna_dataframes(
         str(config.labels_path),
         str(config.detail_labels_path),
     )
 
-    # Unique patient IDs for splitting
+    # split by patient
     patient_ids = np.array(df["patientId"].unique())
     np.random.seed(config.seed)
     np.random.shuffle(patient_ids)
 
-    # Optionally limit number of patients
     if config.max_samples is not None and config.max_samples < len(patient_ids):
         patient_ids = patient_ids[:config.max_samples]
         print(f"Using subset: {len(patient_ids)} patients (--max-samples={config.max_samples})")
@@ -126,7 +106,7 @@ def build_data_loaders(config: Config):
     n_workers = config.effective_num_workers
     pf = getattr(config, "prefetch_factor", 2)
 
-    # WeightedRandomSampler for class imbalance
+    # oversample positives to fight class imbalance
     use_weighted = getattr(config, "use_weighted_sampler", False)
     sampler = None
     if use_weighted:
@@ -141,7 +121,7 @@ def build_data_loaders(config: Config):
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
-        shuffle=(sampler is None),  # shuffle only if no sampler
+        shuffle=(sampler is None),  # can't shuffle + sample
         sampler=sampler,
         num_workers=n_workers,
         collate_fn=collate_fn,
@@ -151,7 +131,7 @@ def build_data_loaders(config: Config):
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=config.batch_size * 2,  # 2x batch for eval (no gradients stored)
+        batch_size=config.batch_size * 2,  # bigger batch, no grads at eval
         shuffle=False,
         num_workers=n_workers,
         collate_fn=collate_fn,
@@ -163,10 +143,7 @@ def build_data_loaders(config: Config):
     return train_loader, val_loader, val_dataset
 
 
-# ── Training (single model, single GPU) ───────────────────────────────
-
 def _train_single(name: str, config: Config):
-    """Train a single model. Used as target for multiprocessing."""
     set_seed(config.seed)
     train_loader, val_loader, _ = build_data_loaders(config)
 
@@ -179,7 +156,6 @@ def _train_single(name: str, config: Config):
                         min_size=config.image_min_size, max_size=config.image_max_size)
     history = train_model(model, train_loader, val_loader, config, name)
 
-    # Clear GPU cache after training
     if config.device.type == "cuda":
         torch.cuda.empty_cache()
 
@@ -187,7 +163,6 @@ def _train_single(name: str, config: Config):
 
 
 def _train_on_gpu(name: str, gpu_id: int, config: Config):
-    """Train a model on a specific GPU (for multiprocessing.Process)."""
     adjusted = replace(config, force_device=f"cuda:{gpu_id}")
     try:
         _train_single(name, adjusted)
@@ -197,14 +172,12 @@ def _train_on_gpu(name: str, gpu_id: int, config: Config):
         traceback.print_exc()
 
 
-# ── Multi-GPU parallel training ───────────────────────────────────────
-
 def run_train(model_names: list, config: Config):
-    """Train models, using multi-GPU parallelism when available."""
+    """Train models, one per GPU when several are available."""
     gpu_ids = discover_gpus()
     print_gpu_info(gpu_ids)
 
-    # If user forced a specific device, or only 1 model, train sequentially
+    # forced device / single model / single GPU -> just go sequential
     if config.force_device is not None or len(model_names) <= 1 or len(gpu_ids) <= 1:
         train_loader, val_loader, _ = build_data_loaders(config)
         histories = {}
@@ -217,22 +190,19 @@ def run_train(model_names: list, config: Config):
                                 min_size=config.image_min_size, max_size=config.image_max_size)
             history = train_model(model, train_loader, val_loader, config, name)
             histories[name] = history
-            # Clear GPU cache between models
             if config.device.type == "cuda":
                 torch.cuda.empty_cache()
         return histories
 
-    # --- Multi-GPU: subprocess-based scheduling with per-model log files ---
+    # multi-GPU: one subprocess per model, each logging to its own file
     import subprocess
 
     n_gpus = len(gpu_ids)
-    # Each subprocess is independent — give each the full worker count
     workers_per_gpu = config.effective_num_workers
 
     print(f"\nGPU pool: {n_gpus} GPUs, {workers_per_gpu} workers/GPU")
     print(f"  Models queued: {[m.upper() for m in model_names]}")
 
-    # Build CLI args from config
     cli_args = (
         f" --data-dir {config.data_dir}"
         f" --output-dir {config.output_dir}"
@@ -270,11 +240,11 @@ def run_train(model_names: list, config: Config):
         cli_args += f" --max-samples {config.max_samples}"
 
     pending = list(model_names)
-    running = {}   # gpu_id -> (model_name, process, log_fh, log_path)
+    running = {}   # gpu_id -> (name, proc, log_fh, log_path)
     histories = {}
 
     while pending or running:
-        # Launch on every free GPU
+        # fill every free GPU
         free_gpus = [g for g in gpu_ids if g not in running]
         while pending and free_gpus:
             gpu_id = free_gpus.pop(0)
@@ -295,15 +265,13 @@ def run_train(model_names: list, config: Config):
         if not running:
             break
 
-        # Poll every 30 seconds and show clean status
-        time.sleep(30)
+        time.sleep(30)  # poll interval
 
-        # Show latest epoch summary from each model's log
+        # print latest epoch line per running model
         for gpu_id in list(running.keys()):
             name, proc, log_fh, log_path = running[gpu_id]
             rc = proc.poll()
 
-            # Find latest epoch summary line
             try:
                 with open(log_path) as f:
                     lines = f.readlines()
@@ -313,7 +281,7 @@ def run_train(model_names: list, config: Config):
                         print(f"  GPU {gpu_id}: {stripped}")
                         break
                 else:
-                    # No epoch line yet, show last non-empty line
+                    # no epoch line yet -> last non-empty line
                     for line in reversed(lines):
                         stripped = line.strip()
                         if stripped and not stripped.startswith(("W0", "Traceback", "  File")):
@@ -329,7 +297,7 @@ def run_train(model_names: list, config: Config):
                 print(f"\n{'='*60}")
                 print(f"  {name.upper()} — {status} (GPU {gpu_id} free)")
                 print(f"{'='*60}")
-                # Print last 10 lines of log
+                # tail of the log
                 try:
                     with open(log_path) as f:
                         for line in f.readlines()[-10:]:
@@ -342,15 +310,10 @@ def run_train(model_names: list, config: Config):
                     with open(hist_path) as f:
                         histories[name] = json.load(f)
 
-                # GPU is now free — next iteration will fill it immediately
-
     return histories
 
 
-# ── Evaluate ───────────────────────────────────────────────────────────
-
 def run_evaluate(model_names: list, config: Config):
-    """Evaluate trained models and return metrics."""
     _, val_loader, _ = build_data_loaders(config)
     all_metrics = {}
     all_predictions = {}
@@ -398,20 +361,16 @@ def run_evaluate(model_names: list, config: Config):
         roc_auc = metrics.get("roc_auc", 0.0)
         print(f"  ROC AUC:      {roc_auc*100:.1f}  (optimal threshold={opt_thresh:.3f})")
 
-        # Clear GPU cache between models
         if config.device.type == "cuda":
             torch.cuda.empty_cache()
 
     return all_metrics, all_predictions, all_targets
 
 
-# ── Compare / Visualize / Full ─────────────────────────────────────────
-
 def run_compare(config: Config):
-    """Load saved histories and metrics, generate comparison plots."""
+    """Load saved histories/metrics and make the comparison plots."""
     out_dir = Path(config.output_dir)
 
-    # Load histories
     histories = {}
     for name in MODELS:
         hist_path = out_dir / f"{name}_history.json"
@@ -419,7 +378,7 @@ def run_compare(config: Config):
             with open(hist_path) as f:
                 histories[name] = json.load(f)
 
-    # Evaluate to get predictions for AP-vs-IoU plot
+    # need predictions for the AP-vs-IoU plot
     model_names = list(histories.keys()) or MODELS
     all_metrics, all_predictions, all_targets = run_evaluate(model_names, config)
 
@@ -427,12 +386,9 @@ def run_compare(config: Config):
         print("ERROR: No training histories or metrics found. Train models first.")
         return
 
-    # Ensemble FCOS + RetinaNet via Weighted Box Fusion (Solovyev et al., 2021).
-    # We intentionally exclude Faster R-CNN: its score distribution is poorly
-    # calibrated at the 0.3 threshold (optimal threshold ~0.84 from ROC), so
-    # adding it to the WBF pool injects low-score false positives and drops
-    # patient-level F1 by ~10 points. The two-model ensemble pairs the paper's
-    # anchor-free method with its closest anchor-based comparator.
+    # FCOS + RetinaNet via Weighted Box Fusion. Faster R-CNN left out on
+    # purpose: its scores are badly calibrated at 0.3 (ROC optimum ~0.84), so
+    # it dumps low-score FPs into WBF and costs ~10 F1 points.
     if "fcos" in all_predictions and "retinanet" in all_predictions:
         try:
             from src.ensemble import ensemble_predictions
@@ -461,17 +417,10 @@ def run_compare(config: Config):
 
 
 def run_visualize(config: Config, num_samples: int = 6):
-    """Generate detection visualizations on sample images.
-
-    Picks a mix of positive (ground-truth present) and negative cases, runs
-    each trained model (plus a FCOS+RetinaNet WBF ensemble) on them, and plots
-    them with per-model Youden-optimal thresholds if results/all_metrics.json
-    is available.
-    """
+    """Detection plots on a few val images (mix of pos + neg cases)."""
     _, val_loader, val_dataset = build_data_loaders(config)
 
-    # Pick samples: bias toward positives (3 pos + 1 neg) to show the quality
-    # of the detections, not just the background-negative baseline.
+    # bias toward positives (3 pos + 1 neg) so the plots actually show boxes
     pos_indices: list = []
     neg_indices: list = []
     for i in range(len(val_dataset)):
@@ -497,7 +446,6 @@ def run_visualize(config: Config, num_samples: int = 6):
 
     print(f"Visualisation samples: {n_pos} positive + {n_neg} negative")
 
-    # Load predictions for each model
     predictions_by_model = {}
     for name in MODELS:
         ckpt_path = Path(config.checkpoint_dir) / f"{name}_best.pth"
@@ -523,7 +471,7 @@ def run_visualize(config: Config, num_samples: int = 6):
         if config.device.type == "cuda":
             torch.cuda.empty_cache()
 
-    # Add FCOS+RetinaNet ensemble column via WBF, matching the report
+    # extra ensemble column (WBF), matching the report
     if "fcos" in predictions_by_model and "retinanet" in predictions_by_model:
         try:
             from src.ensemble import ensemble_predictions
@@ -534,13 +482,8 @@ def run_visualize(config: Config, num_samples: int = 6):
         except Exception as e:
             print(f"  WARNING: ensemble in visualize failed: {e}")
 
-    # Per-model visualisation thresholds.
-    # The Youden-optimal threshold in all_metrics.json is a *patient-level*
-    # threshold on max-score-per-image, so it's too strict when applied
-    # box-by-box: a 0.3-score box on a positive patient is still a useful
-    # prediction to show even if it alone wouldn't trigger a patient-positive
-    # at the Youden cut. We use ``max(0.5 * opt, 0.10)`` as a viz cut to
-    # show the model's reasonable predictions while still filtering noise.
+    # Youden threshold in all_metrics.json is patient-level (max score per
+    # image), too strict box-by-box, so relax it to max(0.5*opt, 0.10) for viz
     per_model_threshold: dict = {}
     metrics_path = Path(config.output_dir) / "all_metrics.json"
     if metrics_path.exists():
@@ -570,7 +513,7 @@ def run_visualize(config: Config, num_samples: int = 6):
 
 
 def run_full(config: Config):
-    """Run the complete pipeline: train, evaluate, compare, visualize."""
+    """train -> evaluate -> compare -> visualize."""
     gpu_ids = discover_gpus()
     print("=" * 60)
     print("  PNEUMONIA DETECTION — FULL PIPELINE")
@@ -585,13 +528,10 @@ def run_full(config: Config):
     print(f"Scheduler: {getattr(config, 'scheduler_type', 'cosine')}, Weighted sampler: {getattr(config, 'use_weighted_sampler', False)}")
     print()
 
-    # Train all models
     histories = run_train(MODELS, config)
-
-    # Evaluate all models
     all_metrics, all_predictions, all_targets = run_evaluate(MODELS, config)
 
-    # Collect sample images for visualization
+    # a few images for the detection plots
     _, _, val_dataset = build_data_loaders(config)
     sample_images = []
     sample_targets = []
@@ -600,7 +540,6 @@ def run_full(config: Config):
         sample_images.append(img)
         sample_targets.append(tgt)
 
-    # Generate all plots
     generate_all_plots(
         histories=histories,
         all_metrics=all_metrics,
@@ -616,8 +555,6 @@ def run_full(config: Config):
     print(f"Results saved to: {config.output_dir}/")
     print(f"Checkpoints saved to: {config.checkpoint_dir}/")
 
-
-# ── CLI ────────────────────────────────────────────────────────────────
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -698,7 +635,7 @@ def parse_args():
     parser.add_argument("--pos-weight", type=float, default=3.0,
                         help="Weight for positive patients in sampler (default: 3.0)")
 
-    # Optimizer (Adam is default and paper-faithful; SGD is our own ablation)
+    # optimizer (adam = paper default; sgd = our ablation)
     parser.add_argument("--optimizer", choices=["adam", "sgd"], default="adam",
                         help="Optimizer (default adam, matching Wu et al.; sgd = our ablation)")
     parser.add_argument("--momentum", type=float, default=0.9,
@@ -713,10 +650,9 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # CUDA allocator tuning (before any CUDA ops)
+    # set before any CUDA op
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    # Allow TF32 for matmuls on Ampere+ (faster, negligible precision loss)
-    torch.set_float32_matmul_precision("high")
+    torch.set_float32_matmul_precision("high")  # TF32 matmuls
 
     config = Config(
         data_dir=args.data_dir,
@@ -763,7 +699,7 @@ def main():
 
     set_seed(config.seed)
 
-    # Validate data directory
+    # data must exist for these modes
     if args.mode in ("train", "evaluate", "full", "visualize"):
         if not config.images_path.exists():
             print(f"ERROR: Dataset not found at {config.images_path}")

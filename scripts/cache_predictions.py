@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Run inference once on the val split and cache predictions + targets to disk.
-
-This unblocks all downstream analyses (bootstrap CIs, FROC, calibration,
-learnt patient aggregator, threshold-holdout protocol, RSNA-bucket AP) without
-having to re-run model inference each time.
-
-Outputs (under results/predictions/):
-    {model}_preds.pt   - list of {"boxes", "scores", "labels"} per image
-    targets.pt         - list of {"boxes", "labels", "area"} per image
-    val_index.json     - patient ID order for reproducibility
-
-Usage:
-    python scripts/cache_predictions.py
-    python scripts/cache_predictions.py --no-tta            # faster, lower AP
-    python scripts/cache_predictions.py --models fcos       # one model only
-"""
+# Run inference once and dump preds + targets so the analyses don't re-run the models.
 from __future__ import annotations
 
 import argparse
@@ -43,8 +28,7 @@ def cache_one(name: str, val_loader, config, use_tta: bool, use_soft_nms: bool, 
         return None
 
     print(f"  [{name}] loading {ckpt_path.name}")
-    # Strip a trailing `_paper` (or any user suffix) to map back to the base
-    # architecture name when building the model.
+    # drop _paper suffix -> base arch name for build_model
     arch_name = name
     for sfx in ("_paper",):
         if arch_name.endswith(sfx):
@@ -61,14 +45,14 @@ def cache_one(name: str, val_loader, config, use_tta: bool, use_soft_nms: bool, 
     t0 = time.time()
     preds, tgts = evaluate_model(
         model, val_loader, config.device,
-        use_amp=False,           # MPS doesn't use CUDA AMP
+        use_amp=False,           # no CUDA AMP on MPS
         use_tta=use_tta,
         use_soft_nms=use_soft_nms,
     )
     dt = time.time() - t0
     print(f"  [{name}] inference done in {dt/60:.1f} min ({len(preds)} images)")
 
-    # Compact: keep only what downstream code needs, on CPU
+    # keep only boxes/scores/labels, move to CPU
     compact_preds = [{
         "boxes": p["boxes"].detach().cpu(),
         "scores": p["scores"].detach().cpu(),
@@ -77,8 +61,7 @@ def cache_one(name: str, val_loader, config, use_tta: bool, use_soft_nms: bool, 
     torch.save(compact_preds, out_dir / f"{name}_preds.pt")
     print(f"  [{name}] saved {out_dir / (name + '_preds.pt')}")
 
-    # Free GPU/MPS memory
-    del model
+    del model  # free memory
     if config.device.type == "cuda":
         torch.cuda.empty_cache()
     elif config.device.type == "mps":
@@ -123,7 +106,7 @@ def main():
     out_dir = Path(config.output_dir) / "predictions"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Persist val patient order for reproducibility
+    # save val patient order
     (out_dir / "val_index.json").write_text(json.dumps(val_dataset.patient_ids))
 
     targets_saved = False

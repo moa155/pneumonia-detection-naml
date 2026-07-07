@@ -1,15 +1,4 @@
-"""Training and evaluation engine for detection models.
-
-Implements:
-  - Backbone freezing for stable fine-tuning
-  - Exponential Moving Average (EMA) of model weights
-  - Cosine annealing and step LR schedules with warmup
-  - Gradient accumulation for larger effective batch sizes
-  - Multi-scale training for scale robustness
-  - Test-Time Augmentation (TTA) with horizontal flip
-  - Gaussian Soft-NMS for improved recall
-  - Channels-last memory format for GPU speedup
-"""
+"""Train/eval loop for the detection models."""
 
 import json
 import math
@@ -24,27 +13,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
-# -----------------------------------------------------------------------
-# Exponential Moving Average
-# -----------------------------------------------------------------------
-
 class ModelEMA:
-    """Exponential Moving Average of model weights.
-
-    Maintains a shadow copy of model parameters as an exponential moving
-    average. The EMA weights provide better generalization than the raw
-    training weights (smoother optimization trajectory).
-
-    Usage:
-        ema = ModelEMA(model, decay=0.999)
-        for batch in loader:
-            loss.backward(); optimizer.step()
-            ema.update(model)
-        # For evaluation:
-        ema.apply_shadow(model)
-        evaluate(model, ...)
-        ema.restore(model)
-    """
+    """EMA of the weights - shadow copy generalises a bit better."""
 
     def __init__(self, model: torch.nn.Module, decay: float = 0.999):
         self.decay = decay
@@ -55,7 +25,7 @@ class ModelEMA:
                 self.shadow[name] = param.data.clone()
 
     def update(self, model: torch.nn.Module):
-        """Update shadow weights with current model parameters."""
+        # shadow = decay*shadow + (1-decay)*param
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.shadow:
                 self.shadow[name].mul_(self.decay).add_(
@@ -63,14 +33,13 @@ class ModelEMA:
                 )
 
     def apply_shadow(self, model: torch.nn.Module):
-        """Replace model parameters with EMA shadow (for evaluation)."""
+        # swap in EMA weights, keep a backup to restore later
         for name, param in model.named_parameters():
             if name in self.shadow:
                 self.backup[name] = param.data.clone()
                 param.data.copy_(self.shadow[name])
 
     def restore(self, model: torch.nn.Module):
-        """Restore original model parameters (after evaluation)."""
         for name, param in model.named_parameters():
             if name in self.backup:
                 param.data.copy_(self.backup[name])
@@ -83,19 +52,8 @@ class ModelEMA:
         self.shadow = {k: v.clone() for k, v in state_dict.items()}
 
 
-# -----------------------------------------------------------------------
-# Backbone freezing
-# -----------------------------------------------------------------------
-
 def _freeze_backbone(model: torch.nn.Module):
-    """Freeze early ResNet stages (conv1, bn1, layer1, layer2).
-
-    Early layers learn generic low-level features (edges, textures) that
-    transfer perfectly from COCO/ImageNet. Freezing them:
-      - Prevents catastrophic forgetting of pretrained features
-      - Reduces memory usage and computation by ~30-40%
-      - Stabilizes training with small batch sizes
-    """
+    """Freeze early ResNet stages (conv1/bn1/layer1/layer2) - keep pretrained low-level feats."""
     body = None
     if hasattr(model, "backbone") and hasattr(model.backbone, "body"):
         body = model.backbone.body
@@ -111,18 +69,13 @@ def _freeze_backbone(model: torch.nn.Module):
 
 
 def _unfreeze_backbone(model: torch.nn.Module):
-    """Unfreeze all backbone parameters."""
     if hasattr(model, "backbone"):
         for param in model.backbone.parameters():
             param.requires_grad = True
 
 
-# -----------------------------------------------------------------------
-# Model threshold manipulation (for Soft-NMS)
-# -----------------------------------------------------------------------
-
+# score/nms thresholds live in different places depending on the arch
 def _set_model_thresholds(model, score_thresh=0.05, nms_thresh=0.5):
-    """Set score and NMS thresholds for different model architectures."""
     if hasattr(model, "roi_heads"):  # Faster R-CNN
         model.roi_heads.score_thresh = score_thresh
         model.roi_heads.nms_thresh = nms_thresh
@@ -132,18 +85,13 @@ def _set_model_thresholds(model, score_thresh=0.05, nms_thresh=0.5):
 
 
 def _get_model_thresholds(model):
-    """Get current score and NMS thresholds."""
     if hasattr(model, "roi_heads"):
         return model.roi_heads.score_thresh, model.roi_heads.nms_thresh
     return model.score_thresh, model.nms_thresh
 
 
-# -----------------------------------------------------------------------
-# torch.compile
-# -----------------------------------------------------------------------
-
 def _try_compile(model: torch.nn.Module) -> torch.nn.Module:
-    """Attempt torch.compile(); return original model on failure."""
+    """torch.compile if we can, else fall back to eager."""
     from torchvision.models.detection import FasterRCNN, FCOS, RetinaNet
 
     if isinstance(model, (FasterRCNN, FCOS, RetinaNet)):
@@ -157,10 +105,6 @@ def _try_compile(model: torch.nn.Module) -> torch.nn.Module:
         print(f"  torch.compile() unavailable ({e}), using eager mode")
         return model
 
-
-# -----------------------------------------------------------------------
-# Training
-# -----------------------------------------------------------------------
 
 def train_one_epoch(
     model: torch.nn.Module,
@@ -181,7 +125,6 @@ def train_one_epoch(
     use_amp = amp_dtype is not None and device.type == "cuda"
     accum_steps = max(1, gradient_accumulation)
 
-    # Multi-scale training: random resize per batch
     multi_scale_sizes = [448, 480, 512, 544, 576]
 
     pbar = tqdm(data_loader, desc=f"Epoch {epoch}", file=sys.stdout)
@@ -193,7 +136,7 @@ def train_one_epoch(
             {k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets
         ]
 
-        # Skip batches with invalid bounding boxes
+        # drop batches with degenerate/NaN boxes
         valid = True
         for t in targets:
             if t["boxes"].numel() > 0:
@@ -208,18 +151,15 @@ def train_one_epoch(
         if not valid:
             continue
 
-        # Multi-scale: randomly change model's internal resize
         if multi_scale:
             scale = random.choice(multi_scale_sizes)
             model.transform.min_size = (scale,)
             model.transform.max_size = scale
 
-        # Forward pass with optional mixed precision
         with torch.amp.autocast(device.type, enabled=use_amp, dtype=amp_dtype):
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
-            # Scale loss for gradient accumulation
-            losses = losses / accum_steps
+            losses = losses / accum_steps  # divide for grad accumulation
 
         if not math.isfinite(losses.item() * accum_steps):
             print(f"WARNING: non-finite loss {losses.item() * accum_steps:.4f}, skipping batch")
@@ -231,7 +171,7 @@ def train_one_epoch(
         else:
             losses.backward()
 
-        # Optimizer step every accum_steps
+        # step only every accum_steps (or on the last batch)
         if (batch_idx + 1) % accum_steps == 0 or (batch_idx + 1) == len(data_loader):
             if scaler is not None:
                 scaler.unscale_(optimizer)
@@ -242,12 +182,10 @@ def train_one_epoch(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-            # Update EMA after each optimizer step (not per epoch)
-            if ema is not None:
+            if ema is not None:  # update EMA per optimizer step
                 ema.update(model)
 
-        # Accumulate losses (unscaled)
-        actual_loss = losses.item() * accum_steps
+        actual_loss = losses.item() * accum_steps  # back to unscaled
         for k, v in loss_dict.items():
             running_losses[k] = running_losses.get(k, 0.0) + v.item()
         running_losses["total_loss"] = running_losses.get("total_loss", 0.0) + actual_loss
@@ -255,22 +193,16 @@ def train_one_epoch(
 
         pbar.set_postfix(loss=f"{actual_loss:.4f}")
 
-    # Reset multi-scale to default for validation
-    if multi_scale:
+    if multi_scale:  # back to default size for val
         model.transform.min_size = (512,)
         model.transform.max_size = 512
 
-    # Average
     if num_batches == 0:
         print("WARNING: All batches skipped (non-finite losses). Returning zero losses.")
         return {"total_loss": 0.0}
     avg_losses = {k: v / num_batches for k, v in running_losses.items()}
     return avg_losses
 
-
-# -----------------------------------------------------------------------
-# Evaluation
-# -----------------------------------------------------------------------
 
 @torch.inference_mode()
 def evaluate(
@@ -280,14 +212,7 @@ def evaluate(
     use_amp: bool = False,
     amp_dtype: Optional[torch.dtype] = None,
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Run inference and collect predictions + ground truth.
-
-    Returns:
-        all_predictions: list of dicts with keys
-            image_id, boxes (xyxy), scores, labels
-        all_targets: list of dicts with keys
-            image_id, boxes (xyxy), labels, area, iscrowd
-    """
+    """Inference -> (predictions, targets), both as lists of dicts."""
     model.eval()
     all_predictions = []
     all_targets = []
@@ -330,12 +255,7 @@ def evaluate_with_tta(
     use_amp: bool = False,
     amp_dtype: Optional[torch.dtype] = None,
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Evaluate with Test-Time Augmentation (horizontal flip).
-
-    Runs inference on both original and horizontally flipped images,
-    then combines predictions and applies NMS to remove duplicates.
-    Typically improves AP by 1-3%.
-    """
+    """TTA eval: run original + h-flip, merge, NMS the dupes."""
     model.eval()
     all_predictions = []
     all_targets = []
@@ -344,11 +264,9 @@ def evaluate_with_tta(
     for images, targets in tqdm(data_loader, desc="Evaluating (TTA)", file=sys.stdout):
         images_device = [img.to(device, non_blocking=True) for img in images]
 
-        # Original predictions
         with torch.amp.autocast(device.type, enabled=amp_enabled, dtype=amp_dtype):
             orig_outputs = model(images_device)
 
-        # Flipped predictions
         flipped_images = [img.flip(-1) for img in images_device]
         with torch.amp.autocast(device.type, enabled=amp_enabled, dtype=amp_dtype):
             flip_outputs = model(flipped_images)
@@ -359,12 +277,11 @@ def evaluate_with_tta(
             w = img.shape[-1]
             img_id = target["image_id"].item()
 
-            # Flip boxes back to original coordinates
+            # un-flip the x coords
             flip_boxes = flip_out["boxes"].clone()
             if len(flip_boxes) > 0:
                 flip_boxes[:, [0, 2]] = w - flip_boxes[:, [2, 0]]
 
-            # Combine predictions from both passes
             if len(orig_out["boxes"]) > 0 and len(flip_boxes) > 0:
                 all_boxes = torch.cat([orig_out["boxes"], flip_boxes])
                 all_scores = torch.cat([orig_out["scores"], flip_out["scores"]])
@@ -382,8 +299,7 @@ def evaluate_with_tta(
                 all_scores = orig_out["scores"]
                 all_labels = orig_out["labels"]
 
-            # Apply NMS on combined predictions to remove duplicates
-            if len(all_boxes) > 0:
+            if len(all_boxes) > 0:  # NMS the merged set
                 keep = torchvision.ops.nms(all_boxes, all_scores, iou_threshold=0.5)
                 all_boxes = all_boxes[keep]
                 all_scores = all_scores[keep]
@@ -421,35 +337,23 @@ def evaluate_model(
     use_soft_nms: bool = False,
     amp_dtype: Optional[torch.dtype] = None,
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Evaluate with optional TTA and Soft-NMS.
-
-    This is the main evaluation entry point that orchestrates all
-    advanced evaluation features.
-    """
-    # Relax model thresholds when using Soft-NMS (let more proposals through)
+    """Main eval entry point - optional TTA + Soft-NMS."""
     orig_score_thresh, orig_nms_thresh = _get_model_thresholds(model)
-    if use_soft_nms:
+    if use_soft_nms:  # loosen thresholds so soft-nms has more to work with
         _set_model_thresholds(model, score_thresh=0.01, nms_thresh=0.7)
 
-    # Run evaluation (with or without TTA)
     if use_tta:
         predictions, targets = evaluate_with_tta(model, data_loader, device, use_amp, amp_dtype=amp_dtype)
     else:
         predictions, targets = evaluate(model, data_loader, device, use_amp, amp_dtype=amp_dtype)
 
-    # Apply Soft-NMS post-processing
     if use_soft_nms:
         from src.evaluate import apply_soft_nms_to_predictions
         predictions = apply_soft_nms_to_predictions(predictions, sigma=0.5, score_threshold=0.05)
-        # Restore original thresholds
-        _set_model_thresholds(model, orig_score_thresh, orig_nms_thresh)
+        _set_model_thresholds(model, orig_score_thresh, orig_nms_thresh)  # put thresholds back
 
     return predictions, targets
 
-
-# -----------------------------------------------------------------------
-# Checkpointing
-# -----------------------------------------------------------------------
 
 def _save_full_checkpoint(
     path: Path,
@@ -462,7 +366,7 @@ def _save_full_checkpoint(
     history: Dict,
     ema: Optional[ModelEMA] = None,
 ):
-    """Save full training state for resuming."""
+    """Dump everything needed to resume."""
     state = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
@@ -487,7 +391,7 @@ def _load_full_checkpoint(
     device: torch.device,
     ema: Optional[ModelEMA] = None,
 ) -> Tuple[int, float, Dict]:
-    """Load full training state. Returns (start_epoch, best_ap, history)."""
+    """Load state -> (start_epoch, best_ap, history)."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
@@ -504,10 +408,6 @@ def _load_full_checkpoint(
     return start_epoch, best_ap, history
 
 
-# -----------------------------------------------------------------------
-# Main training loop
-# -----------------------------------------------------------------------
-
 def train_model(
     model: torch.nn.Module,
     train_loader: DataLoader,
@@ -515,24 +415,11 @@ def train_model(
     config,
     model_name: str,
 ) -> Dict:
-    """Full training loop with all advanced techniques.
-
-    Features:
-      - Backbone freezing (early ResNet layers frozen for first N epochs)
-      - EMA (exponential moving average of weights for better generalization)
-      - Cosine annealing LR schedule with warmup
-      - Gradient accumulation for effective larger batch size
-      - Multi-scale training for scale robustness
-      - TTA + Soft-NMS during validation
-      - Early stopping based on AP improvement
-      - Full checkpointing for crash recovery
-
-    Returns a history dict with per-epoch losses and metrics.
-    """
+    """Full training loop. Returns the history dict."""
     device = config.device
     model.to(device)
 
-    # Channels-last memory format for GPU speedup (10-30% faster convolutions)
+    # channels-last -> faster convs on GPU
     if device.type == "cuda":
         try:
             model = model.to(memory_format=torch.channels_last)
@@ -540,16 +427,15 @@ def train_model(
         except Exception:
             pass
 
-    # OpenMP threads for CPU parallelism
     if hasattr(config, "num_threads") and config.num_threads > 0:
         torch.set_num_threads(config.num_threads)
 
-    # --- Checkpoint suffix (lets us train e.g. fcos_paper without overwriting fcos) ---
+    # suffix so e.g. fcos_paper doesn't clobber fcos checkpoints
     ckpt_suffix = getattr(config, "checkpoint_suffix", "")
     if ckpt_suffix:
         model_name = f"{model_name}{ckpt_suffix}"
 
-    # Mixed precision: choose dtype and scaler
+    # AMP: pick dtype + scaler
     use_amp = hasattr(config, "use_amp") and config.use_amp and device.type == "cuda"
     use_bf16 = getattr(config, "use_bf16", False) and device.type == "cuda"
     amp_dtype: Optional[torch.dtype] = None
@@ -557,7 +443,7 @@ def train_model(
 
     if use_amp:
         if use_bf16:
-            # BFloat16: no loss scaling needed, requires Ampere+ (sm_80)
+            # bf16 needs no loss scaling (Ampere+ only)
             amp_dtype = torch.bfloat16
             print(f"  Using BFloat16 AMP on {device} (no GradScaler)")
         else:
@@ -565,19 +451,18 @@ def train_model(
             scaler = torch.amp.GradScaler(device.type)
             print(f"  Using Float16 AMP on {device}")
 
-    # torch.compile() for PyTorch 2.x speedup
     use_compile = getattr(config, "use_compile", False)
     if use_compile and device.type == "cuda":
         model = _try_compile(model)
 
-    # --- Backbone freezing ---
+    # backbone freezing
     freeze_epochs = getattr(config, "freeze_backbone_epochs", 0)
     if freeze_epochs > 0:
         frozen_count = _freeze_backbone(model)
         total_params = sum(1 for p in model.parameters())
         print(f"  Backbone frozen: {frozen_count}/{total_params} params frozen for {freeze_epochs} epochs")
 
-    # --- Optimizer: Adam (default) or SGD (paper-style for FCOS) ---
+    # optimizer: Adam by default, SGD for the paper-style FCOS runs
     params = [p for p in model.parameters() if p.requires_grad]
     fused = device.type == "cuda"
     optimizer_type = getattr(config, "optimizer_type", "adam").lower()
@@ -595,7 +480,7 @@ def train_model(
         )
         print(f"  Optimizer: Adam lr={config.learning_rate}")
 
-    # --- LR Schedule ---
+    # LR schedule = warmup then cosine/step
     scheduler_type = getattr(config, "scheduler_type", "cosine")
     warmup_epochs = min(2, max(1, config.num_epochs // 5))
 
@@ -610,7 +495,7 @@ def train_model(
             eta_min=1e-6,
         )
     else:
-        # Step decay (paper default)
+        # step decay (paper default), rescaled if we run fewer epochs
         milestones = list(config.lr_milestones)
         if config.num_epochs < max(milestones):
             ratio = config.num_epochs / 20.0
@@ -629,14 +514,12 @@ def train_model(
     )
     print(f"  LR schedule: warmup({warmup_epochs}ep) + {scheduler_type}")
 
-    # --- EMA ---
     use_ema = getattr(config, "use_ema", False)
     ema_decay = getattr(config, "ema_decay", 0.999)
     ema = ModelEMA(model, decay=ema_decay) if use_ema else None
     if use_ema:
         print(f"  EMA enabled (decay={ema_decay})")
 
-    # --- Other config ---
     grad_accum = getattr(config, "gradient_accumulation", 1)
     multi_scale = getattr(config, "multi_scale", False)
 
@@ -657,7 +540,7 @@ def train_model(
     best_ap = -1.0
     start_epoch = 0
 
-    # --- Resume from checkpoint ---
+    # resume if a checkpoint is there
     resume = getattr(config, "resume", False)
     resume_path = ckpt_dir / f"{model_name}_resume.pth"
     if resume and resume_path.exists():
@@ -671,7 +554,6 @@ def train_model(
         if best_path.exists():
             print(f"  No resume checkpoint, but found {best_path} — starting fresh training")
 
-    # --- Early stopping state ---
     patience = getattr(config, "early_stopping_patience", 0)
     val_freq = getattr(config, "val_frequency", 1)
     no_improve_count = 0
@@ -679,11 +561,10 @@ def train_model(
     for epoch in range(start_epoch + 1, config.num_epochs + 1):
         t0 = time.time()
 
-        # --- Unfreeze backbone after freeze_epochs ---
+        # unfreeze once freeze_epochs are done, then rebuild opt/sched with a lower backbone LR
         if freeze_epochs > 0 and epoch == start_epoch + freeze_epochs + 1:
             print(f"  Unfreezing backbone at epoch {epoch}")
             _unfreeze_backbone(model)
-            # Rebuild optimizer with all parameters (backbone gets lower LR)
             backbone_params = [
                 p for n, p in model.named_parameters()
                 if "backbone.body" in n and p.requires_grad
@@ -710,7 +591,6 @@ def train_model(
                     weight_decay=config.weight_decay,
                     fused=fused,
                 )
-            # Rebuild scheduler for remaining epochs
             remaining = config.num_epochs - epoch + 1
             if scheduler_type == "cosine":
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -720,12 +600,10 @@ def train_model(
                 scheduler = torch.optim.lr_scheduler.StepLR(
                     optimizer, step_size=max(1, remaining // 2), gamma=0.1
                 )
-            # Reinitialize EMA with new parameters
-            if use_ema:
+            if use_ema:  # re-init EMA, param set changed
                 ema = ModelEMA(model, decay=ema_decay)
             print(f"  Optimizer rebuilt: backbone LR={config.learning_rate * 0.1:.6f}, heads LR={config.learning_rate:.6f}")
 
-        # --- Train ---
         avg_losses = train_one_epoch(
             model, optimizer, train_loader, device, epoch,
             scaler=scaler,
@@ -737,17 +615,15 @@ def train_model(
         history["train_losses"].append(avg_losses)
         history["learning_rates"].append(optimizer.param_groups[0]["lr"])
 
-        # --- Validate (every val_frequency epochs, or last epoch) ---
+        # validate every val_freq epochs (and on the last one)
         is_last_epoch = epoch == config.num_epochs
         should_validate = (epoch % val_freq == 0) or is_last_epoch
 
         if should_validate:
-            # Use EMA weights for evaluation
             if ema is not None:
                 ema.apply_shadow(model)
 
-            # During training: use plain evaluate (no TTA/Soft-NMS) for speed.
-            # TTA and Soft-NMS are only used at final evaluation time.
+            # plain evaluate here for speed; TTA/Soft-NMS only at final eval
             predictions, targets = evaluate(
                 model, val_loader, device, use_amp=use_amp,
                 amp_dtype=amp_dtype,
@@ -763,7 +639,7 @@ def train_model(
 
             ap50 = metrics.get("AP@0.5", 0.0)
 
-            # Save best checkpoint (with EMA weights if available)
+            # save best (EMA weights if we have them)
             if ap50 > best_ap:
                 best_ap = ap50
                 no_improve_count = 0
@@ -778,7 +654,7 @@ def train_model(
             else:
                 no_improve_count += 1
         else:
-            # Carry forward the most recent non-None val metric (skipped epochs append None).
+            # skipped epoch: append None but reuse the last real AP for logging
             last_metric = next(
                 (m for m in reversed(history["val_metrics"]) if m is not None), None
             )
@@ -798,26 +674,22 @@ def train_model(
             f"time={elapsed:.1f}s"
         )
 
-        # Save resume checkpoint on validation epochs only (avoids I/O overhead)
+        # checkpoint on val epochs only (saves I/O)
         if should_validate or is_last_epoch:
             _save_full_checkpoint(
                 resume_path, epoch, model, optimizer, scheduler, scaler, best_ap, history, ema
             )
-            # Also write a partial history.json so it survives if training is
-            # killed before the final save in line ~830. Cheap (history is
-            # small per epoch) and means watchdog backups always include the
-            # latest curve. Without this, an interrupted run loses everything.
+            # also dump a partial history.json so an interrupted run keeps its curve
             partial_out = Path(config.output_dir)
             partial_out.mkdir(parents=True, exist_ok=True)
             with open(partial_out / f"{model_name}_history.json", "w") as f:
                 json.dump(_make_serializable(history), f, indent=2)
 
-        # --- Early stopping ---
         if patience > 0 and no_improve_count >= patience and should_validate:
             print(f"  Early stopping: no improvement for {patience} validations")
             break
 
-    # Save final checkpoint (with EMA weights if available)
+    # final checkpoint (EMA weights if available)
     if ema is not None:
         ema.apply_shadow(model)
     torch.save(
@@ -827,11 +699,9 @@ def train_model(
     if ema is not None:
         ema.restore(model)
 
-    # Clean up resume checkpoint
     if resume_path.exists():
         resume_path.unlink()
 
-    # Save history
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -843,7 +713,7 @@ def train_model(
 
 
 def _make_serializable(obj):
-    """Recursively convert torch tensors and numpy arrays for JSON."""
+    """Make tensors/np arrays JSON-friendly."""
     import numpy as np
 
     if isinstance(obj, dict):

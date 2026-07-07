@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Run all post-hoc analyses from cached predictions.
-
-Produces:
-  results/all_metrics_v2.json         — full metric table for the report
-  results/froc.png / froc.pdf
-  results/calibration.png / calibration.pdf
-  results/ap_bootstrap.png / ap_bootstrap.pdf
-  results/analyses.tex                 — LaTeX fragments to \\input{} from the
-                                         report (tables of new numbers)
-
-Usage:
-  python scripts/run_analyses.py
-  python scripts/run_analyses.py --pred-dir results/predictions --n-boot 500
-"""
+# All post-hoc analyses from the cached preds -> metrics JSON, figures, LaTeX tables.
 from __future__ import annotations
 
 import argparse
@@ -79,7 +66,7 @@ def main():
         boot_ap = bootstrap_ap50(pred_list, targets, n_boot=args.n_boot, seed=args.seed)
         print(f"  AP@0.5 = {boot_ap[0]*100:.2f}% [95% CI {boot_ap[1]*100:.2f}, {boot_ap[2]*100:.2f}]")
 
-        # threshold-holdout protocol (no train-on-test leakage)
+        # fit threshold on cal half, eval on test half (no leakage)
         holdout = threshold_holdout_metrics(
             pred_list, targets, cal_fraction=args.cal_fraction, seed=args.seed,
         )
@@ -87,7 +74,7 @@ def main():
               f"F1_test={holdout['patient_f1_test']*100:.2f}%, "
               f"AP_test={holdout['AP@0.5_test']*100:.2f}%")
 
-        # bootstrap F1 at the held-out threshold, on the *full* val (point est)
+        # F1 at that threshold, bootstrapped over full val
         boot_f1 = bootstrap_patient_f1(
             pred_list, targets, threshold=holdout["threshold"],
             n_boot=args.n_boot * 4, seed=args.seed,
@@ -133,7 +120,7 @@ def main():
             },
         }
 
-    # Paired tests between top single models
+    # paired test: the two best single models
     if "retinanet" in preds and "faster_rcnn" in preds:
         diff, lo, hi, p = paired_ap_test(
             preds["faster_rcnn"], preds["retinanet"], targets,
@@ -145,16 +132,13 @@ def main():
         print(f"\nPaired AP@0.5 Faster R-CNN − RetinaNet: "
               f"{diff*100:+.2f} pts [{lo*100:+.2f}, {hi*100:+.2f}], p={p:.3f}")
 
-    # Save JSON
     (out_dir / "all_metrics_v2.json").write_text(json.dumps(results, indent=2))
     print(f"\nSaved {out_dir / 'all_metrics_v2.json'}")
 
-    # ---- Plots ----
     plot_froc(results, out_dir)
     plot_calibration(results, out_dir)
     plot_ap_bootstrap(results, out_dir)
 
-    # ---- LaTeX fragment for the report ----
     write_latex(results, out_dir / "analyses.tex")
     print(f"Saved {out_dir / 'analyses.tex'}")
 
@@ -230,7 +214,7 @@ def plot_ap_bootstrap(results, out_dir):
 
 
 def write_latex(results, path):
-    """Write a LaTeX fragment with the new tables for the report."""
+    """LaTeX fragment with the result tables."""
     rows_ap = []
     for n, r in results.items():
         if "ap50" not in r: continue

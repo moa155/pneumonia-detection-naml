@@ -1,23 +1,4 @@
-"""Post-hoc analyses that run from cached predictions.
-
-These analyses are how we turn the single training run we have into a more
-defensible scientific result without re-training:
-
-  * Paired patient-level bootstrap CIs on AP@0.5 and patient F1.
-  * Three-way split: Youden threshold on a calibration half, F1 reported on
-    a held-out test half — eliminates threshold-on-test data leakage.
-  * RSNA-percentile size-bucket AP (instead of the COCO buckets that put 99%
-    of opacities in "large").
-  * Free-Response ROC (FROC) curve — the canonical localisation metric in
-    medical-image detection.
-  * Reliability diagram / Expected Calibration Error on patient scores.
-  * Learnt patient-level aggregator: replace the naive "any box > tau" rule
-    with a small logistic regression on (max, mean, count, top-k mean,
-    spatial spread) features.
-
-All inputs are the cached `predictions/*.pt` files produced by
-`scripts/cache_predictions.py`; no model checkpoint or GPU is required.
-"""
+# post-hoc analyses run on cached predictions (no GPU/checkpoint needed)
 from __future__ import annotations
 
 import json
@@ -31,14 +12,10 @@ import torch
 from src.evaluate import compute_ap_at_iou, find_optimal_patient_threshold
 
 
-# -----------------------------------------------------------------------
-# Loading
-# -----------------------------------------------------------------------
-
 def load_cached(
     pred_dir: Path, model_names: Sequence[str]
 ) -> Tuple[Dict[str, List[Dict]], List[Dict]]:
-    """Load cached predictions + shared targets from `pred_dir`."""
+    """load cached preds + shared targets."""
     pred_dir = Path(pred_dir)
     preds: Dict[str, List[Dict]] = {}
     for name in model_names:
@@ -49,15 +26,11 @@ def load_cached(
     return preds, targets
 
 
-# -----------------------------------------------------------------------
-# Paired patient-level bootstrap
-# -----------------------------------------------------------------------
-
 def bootstrap_ap50(
     predictions: List[Dict], targets: List[Dict],
     n_boot: int = 1000, seed: int = 0,
 ) -> Tuple[float, float, float]:
-    """Patient-level bootstrap of AP@0.5: returns (point estimate, lo95, hi95)."""
+    """patient-level bootstrap of AP@0.5 -> (point, lo95, hi95)."""
     rng = np.random.default_rng(seed)
     n = len(predictions)
     point = compute_ap_at_iou(predictions, targets, iou_threshold=0.5)["AP"]
@@ -75,10 +48,10 @@ def bootstrap_patient_f1(
     predictions: List[Dict], targets: List[Dict],
     threshold: float, n_boot: int = 2000, seed: int = 0,
 ) -> Tuple[float, float, float]:
-    """Patient-level bootstrap of F1 at a fixed threshold."""
+    """patient-level bootstrap of F1 at fixed threshold."""
     rng = np.random.default_rng(seed)
     n = len(predictions)
-    # Per-patient (has_gt, has_pred) so the bootstrap is cheap.
+    # precompute per-patient flags so resampling is cheap
     has_gt = np.array([len(t["boxes"]) > 0 for t in targets])
     max_sc = np.array([
         (p["scores"].max().item() if len(p["scores"]) > 0 else 0.0)
@@ -99,20 +72,11 @@ def bootstrap_patient_f1(
     return float(point), float(lo), float(hi)
 
 
-# -----------------------------------------------------------------------
-# Three-way split: threshold on calibration half, eval on test half
-# -----------------------------------------------------------------------
-
 def threshold_holdout_metrics(
     predictions: List[Dict], targets: List[Dict],
     cal_fraction: float = 0.5, seed: int = 0,
 ) -> Dict[str, float]:
-    """Eliminate threshold-on-test leakage by splitting val patients.
-
-    Returns AP@0.5 (unchanged by the split), the Youden threshold found on
-    the calibration half, and patient F1/precision/recall evaluated on the
-    held-out test half at that threshold.
-    """
+    """Youden threshold on a calibration half, F1 etc. on the held-out half (avoids threshold-on-test leakage)."""
     rng = np.random.default_rng(seed)
     n = len(predictions)
     idx = np.arange(n); rng.shuffle(idx)
@@ -154,14 +118,10 @@ def threshold_holdout_metrics(
     }
 
 
-# -----------------------------------------------------------------------
-# RSNA-percentile AP by size bucket
-# -----------------------------------------------------------------------
-
 def ap_by_rsna_buckets(
     predictions: List[Dict], targets: List[Dict],
 ) -> Dict[str, float]:
-    """AP@0.5 stratified by RSNA-percentile size buckets (small/med/large)."""
+    """AP@0.5 by RSNA-percentile size bucket (S/M/L)."""
     areas = np.concatenate([
         t["area"].numpy() for t in targets if len(t["boxes"]) > 0
     ]) if any(len(t["boxes"]) > 0 for t in targets) else np.array([0.0])
@@ -188,21 +148,12 @@ def ap_by_rsna_buckets(
     }
 
 
-# -----------------------------------------------------------------------
-# FROC: average sensitivity vs. false positives per image
-# -----------------------------------------------------------------------
-
 def froc_curve(
     predictions: List[Dict], targets: List[Dict],
     iou_thr: float = 0.5,
     fp_points: Sequence[float] = (0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0),
 ) -> Dict[str, np.ndarray]:
-    """Compute the FROC curve: sensitivity (TPR) as a function of FP/image.
-
-    Returns dict with arrays `fp_per_image`, `sensitivity` (matched length),
-    `score_threshold` (per-point), and the standard CPM = mean sensitivity
-    over `fp_points`.
-    """
+    """FROC curve: sensitivity vs FP/image, plus CPM (mean sens over fp_points)."""
     from src.evaluate import compute_iou_matrix
     n_images = len(predictions)
     total_gt = 0
@@ -238,7 +189,7 @@ def froc_curve(
     tp_cum = np.cumsum(tp_arr); fp_cum = np.cumsum(fp_arr)
     sens = tp_cum / total_gt
     fp_per_img = fp_cum / n_images
-    # CPM: mean sensitivity at the standard FP rates by step interpolation.
+    # CPM = mean sensitivity at the standard FP rates
     cpm_vals = []
     for fp_target in fp_points:
         mask = fp_per_img <= fp_target
@@ -251,14 +202,10 @@ def froc_curve(
     }
 
 
-# -----------------------------------------------------------------------
-# Calibration: reliability diagram + ECE on patient max-scores
-# -----------------------------------------------------------------------
-
 def calibration(
     predictions: List[Dict], targets: List[Dict], n_bins: int = 10,
 ) -> Dict[str, np.ndarray]:
-    """Reliability diagram + Expected Calibration Error on patient max-scores."""
+    """reliability diagram + ECE on patient max-scores."""
     scores = np.array([
         (p["scores"].max().item() if len(p["scores"]) > 0 else 0.0)
         for p in predictions
@@ -281,10 +228,6 @@ def calibration(
     }
 
 
-# -----------------------------------------------------------------------
-# Learnt patient-level aggregator
-# -----------------------------------------------------------------------
-
 @dataclass
 class AggregatorResult:
     val_f1: float; val_precision: float; val_recall: float; val_accuracy: float
@@ -292,7 +235,7 @@ class AggregatorResult:
 
 
 def _patient_features(p: Dict) -> np.ndarray:
-    """Per-patient feature vector for the learnt aggregator."""
+    # 7 features per patient: max, mean, sum, count, top-3 scores, spatial std
     s = p["scores"].numpy() if hasattr(p["scores"], "numpy") else np.asarray(p["scores"])
     b = p["boxes"].numpy() if hasattr(p["boxes"], "numpy") else np.asarray(p["boxes"])
     if len(s) == 0:
@@ -311,12 +254,7 @@ def learnt_aggregator(
     predictions: List[Dict], targets: List[Dict],
     n_folds: int = 5, seed: int = 0,
 ) -> AggregatorResult:
-    """Cross-validated logistic regression on per-patient features.
-
-    Replaces the "any box > tau" rule with a 7-feature classifier
-    (max, mean, sum, count, top-3 scores, spatial std). All numbers are
-    out-of-fold so there is no train-on-test leakage.
-    """
+    """CV logistic regression on patient features, replacing the 'any box > tau' rule. All numbers out-of-fold."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import StratifiedKFold
 
@@ -329,7 +267,7 @@ def learnt_aggregator(
                                  C=1.0, solver="lbfgs").fit(X[tr], y[tr])
         proba = clf.predict_proba(X[te])[:, 1]
         oof_proba.append(proba); oof_label.append(y[te]); oof_idx.append(te)
-        # Per-fold F1 at Youden threshold from train
+        # per-fold F1 at train Youden threshold
         train_proba = clf.predict_proba(X[tr])[:, 1]
         from sklearn.metrics import roc_curve
         fpr, tpr, thr = roc_curve(y[tr], train_proba)
@@ -358,18 +296,11 @@ def learnt_aggregator(
     )
 
 
-# -----------------------------------------------------------------------
-# Convenience: paired test of two AP@0.5 on the same patients
-# -----------------------------------------------------------------------
-
 def paired_ap_test(
     preds_a: List[Dict], preds_b: List[Dict], targets: List[Dict],
     n_boot: int = 1000, seed: int = 0,
 ) -> Tuple[float, float, float, float]:
-    """Paired bootstrap of AP@0.5_a - AP@0.5_b on the same patients.
-
-    Returns (mean diff, lo95, hi95, p_value_two_sided).
-    """
+    """paired bootstrap of AP@0.5_a - AP@0.5_b -> (diff, lo95, hi95, p_two_sided)."""
     rng = np.random.default_rng(seed)
     n = len(targets)
     point_a = compute_ap_at_iou(preds_a, targets, iou_threshold=0.5)["AP"]

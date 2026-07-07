@@ -1,12 +1,4 @@
-"""Weighted Box Fusion (WBF) ensemble for detection predictions.
-
-Reference:
-    Solovyev, Wang, Gabruseva, "Weighted boxes fusion: Ensembling boxes from
-    different object detection models", Image and Vision Computing (2021).
-
-Given per-image predictions from K models, produces a single ensembled
-prediction set by clustering overlapping boxes and computing weighted averages.
-"""
+# Weighted Box Fusion ensemble (Solovyev et al., 2021)
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -29,20 +21,7 @@ def weighted_boxes_fusion_single(
     iou_thr: float = 0.55,
     skip_box_thr: float = 0.01,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """WBF for a single image.
-
-    Args:
-        boxes_per_model:  list of (N_m, 4) xyxy tensors, one per model.
-        scores_per_model: list of (N_m,) score tensors.
-        labels_per_model: list of (N_m,) label tensors.
-        weights: per-model weights (default: all 1.0).
-        iou_thr: IoU threshold for clustering overlapping boxes.
-        skip_box_thr: drop boxes with score below this before fusion.
-
-    Returns:
-        (fused_boxes, fused_scores, fused_labels) with shapes
-        (M, 4), (M,), (M,).
-    """
+    """WBF on one image. Each input is a per-model list of tensors."""
     n_models = len(boxes_per_model)
     if weights is None:
         weights = [1.0] * n_models
@@ -50,7 +29,7 @@ def weighted_boxes_fusion_single(
 
     weight_sum = float(sum(weights))
 
-    # Collect (box, score*weight, label, model_idx) tuples above threshold
+    # gather (box, score*weight, label, model_idx) above threshold
     entries = []
     for m_idx, (boxes, scores, labels) in enumerate(
         zip(boxes_per_model, scores_per_model, labels_per_model)
@@ -69,10 +48,9 @@ def weighted_boxes_fusion_single(
             torch.zeros(0, dtype=torch.long),
         )
 
-    # Sort by weighted score desc
-    entries.sort(key=lambda e: -e[1])
+    entries.sort(key=lambda e: -e[1])  # weighted score desc
 
-    # Cluster by label + IoU
+    # cluster by label + IoU
     clusters: List[List[tuple]] = []
     for entry in entries:
         box, wscore, label, m_idx = entry
@@ -88,10 +66,8 @@ def weighted_boxes_fusion_single(
         if not placed:
             clusters.append([entry])
 
-    # Fuse each cluster following Solovyev et al. (2021):
-    #   box   = score-weighted average of constituent boxes
-    #   score = (sum of weighted scores / sum of weights) * (cluster_size / n_models)
-    # The coverage factor penalises clusters missed by some of the models.
+    # fuse: box = score-weighted avg, score scaled by coverage (how many
+    # models hit this cluster), so boxes only 1 model found get penalised
     fused_boxes_l: List[torch.Tensor] = []
     fused_scores_l: List[float] = []
     fused_labels_l: List[int] = []
@@ -120,17 +96,7 @@ def ensemble_predictions(
     iou_thr: float = 0.55,
     skip_box_thr: float = 0.01,
 ) -> List[Dict]:
-    """Apply WBF across all images for an ensemble of models.
-
-    Args:
-        predictions_by_model: {model_name: [pred_dict_per_image]}.
-        weights: {model_name: weight}, default uniform.
-        iou_thr: clustering IoU threshold.
-        skip_box_thr: score threshold per input box.
-
-    Returns:
-        List of ensemble prediction dicts matching input structure.
-    """
+    """Run WBF over every image. In: {model: [per-image preds]}."""
     names = list(predictions_by_model.keys())
     if weights is None:
         weights = {n: 1.0 for n in names}

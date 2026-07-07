@@ -1,18 +1,4 @@
-"""FCOS: Anchor-free detector — the paper's proposed method.
-
-This implements the anchor-free detection framework from:
-  Wu et al., "Pneumonia detection based on RSNA dataset and anchor-free
-  deep learning detector", Scientific Reports (2024).
-
-Architecture:
-  - ResNet-50 backbone
-  - Feature Pyramid Network (FPN) with 5 levels (strides 8–128)
-  - Two-branch detection head (center classification + scale regression)
-  - Focal loss for class imbalance
-  - GroupNorm in head for training stability (matching v2 detector quality)
-
-Fine-tuned from COCO-pretrained backbone + FPN for faster convergence.
-"""
+"""FCOS anchor-free detector (Wu et al. 2024). ResNet-50 + FPN, GN heads."""
 
 from functools import partial
 
@@ -25,20 +11,14 @@ from torchvision.ops import sigmoid_focal_loss
 
 
 class PaperFCOSHead(FCOSHead):
-    """FCOS head with paper-matching losses (Wu et al., 2024).
-
-    Differences from torchvision's default FCOSHead:
-      - Box regression: Smooth L1 loss (instead of GIoU loss)
-      - Center-ness: Sigmoid focal loss (instead of BCE)
-      - Classification: Unchanged (already sigmoid focal loss)
-    """
+    """FCOS head matching the paper: Smooth L1 box reg, focal center-ness."""
 
     def compute_loss(self, targets, head_outputs, anchors, matched_idxs):
         cls_logits = head_outputs["cls_logits"]       # [N, HWA, C]
         bbox_regression = head_outputs["bbox_regression"]  # [N, HWA, 4]
         bbox_ctrness = head_outputs["bbox_ctrness"]   # [N, HWA, 1]
 
-        # --- Build per-image GT targets (same as torchvision) ---
+        # per-image GT targets (as in torchvision)
         all_gt_classes_targets = []
         all_gt_boxes_targets = []
         for targets_per_image, matched_idxs_per_image in zip(targets, matched_idxs):
@@ -64,16 +44,15 @@ class PaperFCOSHead(FCOSHead):
         all_gt_classes_targets = torch.stack(all_gt_classes_targets)
         anchors = torch.stack(anchors)
 
-        # Foreground mask
         foregroud_mask = all_gt_classes_targets >= 0
         num_foreground = foregroud_mask.sum().item()
 
-        # --- Classification loss (unchanged: sigmoid focal loss) ---
+        # classification: sigmoid focal (unchanged)
         gt_classes_targets = torch.zeros_like(cls_logits)
         gt_classes_targets[foregroud_mask, all_gt_classes_targets[foregroud_mask]] = 1.0
         loss_cls = sigmoid_focal_loss(cls_logits, gt_classes_targets, reduction="sum")
 
-        # --- Box regression loss: Smooth L1 (paper) instead of GIoU ---
+        # box reg: Smooth L1 (paper) not GIoU
         bbox_reg_targets = self.box_coder.encode(anchors, all_gt_boxes_targets)
         loss_bbox_reg = F.smooth_l1_loss(
             bbox_regression[foregroud_mask],
@@ -81,7 +60,7 @@ class PaperFCOSHead(FCOSHead):
             reduction="sum",
         )
 
-        # --- Center-ness loss: sigmoid focal loss (paper) instead of BCE ---
+        # center-ness: sigmoid focal (paper) not BCE
         if len(bbox_reg_targets) == 0:
             gt_ctrness_targets = bbox_reg_targets.new_zeros(
                 bbox_reg_targets.size()[:-1]
@@ -109,14 +88,9 @@ class PaperFCOSHead(FCOSHead):
 
 def build_fcos(num_classes: int = 2, pretrained_backbone: bool = True,
                min_size: int = 512, max_size: int = 512):
-    """Build FCOS model with ResNet-50 FPN backbone.
-
-    When pretrained_backbone=True, loads COCO-pretrained weights to get
-    a pretrained backbone + FPN. The detection heads are then replaced
-    with GroupNorm versions (torchvision has no fcos_resnet50_fpn_v2).
-    """
+    """FCOS + ResNet-50 FPN, heads swapped for GN versions."""
     if pretrained_backbone:
-        # Load COCO-pretrained model (gets pretrained backbone + FPN)
+        # COCO weights -> pretrained backbone + FPN
         model = fcos_resnet50_fpn(
             weights="DEFAULT",
             min_size=min_size,
@@ -131,10 +105,9 @@ def build_fcos(num_classes: int = 2, pretrained_backbone: bool = True,
             max_size=max_size,
         )
 
-    # Replace head with PaperFCOSHead (Smooth L1 + focal center-ness).
-    # Sub-heads use GroupNorm for stable training with small batch sizes.
-    in_channels = model.backbone.out_channels  # 256 for FPN
-    num_anchors = model.anchor_generator.num_anchors_per_location()[0]  # 1 for FCOS
+    # swap in PaperFCOSHead; GN sub-heads help with the small batch size
+    in_channels = model.backbone.out_channels  # 256 (FPN)
+    num_anchors = model.anchor_generator.num_anchors_per_location()[0]  # 1
     norm_layer = partial(nn.GroupNorm, 32)
 
     paper_head = PaperFCOSHead(in_channels, num_anchors, num_classes)
@@ -146,6 +119,6 @@ def build_fcos(num_classes: int = 2, pretrained_backbone: bool = True,
     )
     model.head = paper_head
 
-    model.score_thresh = 0.1  # paper: "confidence score threshold … set to 0.1"
+    model.score_thresh = 0.1  # paper value
     model.nms_thresh = 0.5
     return model

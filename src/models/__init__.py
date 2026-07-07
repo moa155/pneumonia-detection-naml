@@ -1,4 +1,4 @@
-"""Model factory for pneumonia detection."""
+"""Model factory."""
 
 from src.models.fcos import build_fcos
 from src.models.retinanet import build_retinanet
@@ -13,18 +13,7 @@ MODEL_REGISTRY = {
 
 def build_model(name: str, num_classes: int = 2, pretrained_backbone: bool = True,
                 min_size: int = 512, max_size: int = 512):
-    """Build a detection model by name.
-
-    Args:
-        name: One of 'fcos', 'retinanet', 'faster_rcnn'.
-        num_classes: Number of classes (including background).
-        pretrained_backbone: Whether to use ImageNet-pretrained backbone.
-        min_size: Minimum image size for internal resize.
-        max_size: Maximum image size for internal resize.
-
-    Returns:
-        A torchvision detection model.
-    """
+    """Build a detector by name: fcos | retinanet | faster_rcnn."""
     if name not in MODEL_REGISTRY:
         raise ValueError(f"Unknown model '{name}'. Choose from {list(MODEL_REGISTRY)}")
     return MODEL_REGISTRY[name](

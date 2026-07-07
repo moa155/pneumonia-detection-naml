@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Extra paired-bootstrap tests on cached predictions.
-
-Runs three paired bootstraps on AP@0.5 differences:
-  (1) FCOS (SGD) - RetinaNet
-  (2) Ensemble (FCOS+RetinaNet WBF) - RetinaNet
-  (3) Ensemble (FCOS+RetinaNet WBF) - Faster R-CNN
-
-Writes results/paired_extras.json.
-"""
+# Extra paired-bootstrap tests on AP@0.5 diffs (ensemble/FCOS vs the anchor baselines).
 from __future__ import annotations
 import argparse, json, sys
 from pathlib import Path
@@ -56,7 +48,7 @@ def main():
     Path(args.out).write_text(json.dumps(out, indent=2))
     print(f"\nWrote {args.out}")
 
-    # Emit a LaTeX fragment for the report
+    # LaTeX fragment
     labels = {
         "fcos_paper_vs_retinanet": ("FCOS (SGD)", "RetinaNet"),
         "ensemble_vs_retinanet": ("Ensemble (FCOS+Retina)", "RetinaNet"),

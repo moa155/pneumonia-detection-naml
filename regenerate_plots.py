@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""One-time script: evaluate all models and regenerate all plots with full data (including PR curves).
-
-Usage:
-    python regenerate_plots.py                    # auto-detect device
-    python regenerate_plots.py --device cpu       # force CPU
-    python regenerate_plots.py --device cuda      # force CUDA
-    python regenerate_plots.py --device mps       # force MPS (Apple Silicon)
-"""
+# One-off: eval every model and rebuild all plots (PR curves included).
 
 import argparse
 import json
@@ -46,12 +39,11 @@ def main():
         patient_threshold=0.3,
     )
 
-    # Seed
     random.seed(config.seed)
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
 
-    # Build val loader
+    # val loader
     df = load_rsna_dataframes(str(config.labels_path), str(config.detail_labels_path))
     patient_ids = np.array(df["patientId"].unique())
     np.random.seed(config.seed)
@@ -73,7 +65,7 @@ def main():
 
     print(f"Val set: {len(val_df)} annotations from {len(val_ids)} patients")
 
-    # Evaluate all models
+    # eval all models
     all_metrics = {}
     all_predictions = {}
     all_targets = None
@@ -106,7 +98,7 @@ def main():
         print(f"  AP@0.5: {metrics['AP@0.5']*100:.1f}%  AR@10: {metrics['AR@10']*100:.1f}%")
         print(f"  PR data: {len(metrics.get('precisions', []))} points")
 
-    # Load histories
+    # load histories
     out_dir = Path(config.output_dir)
     histories = {}
     for name in MODELS:
@@ -115,7 +107,7 @@ def main():
             with open(hist_path) as f:
                 histories[name] = json.load(f)
 
-    # Collect sample images for detection visualization
+    # sample images for the detection figure
     sample_images = []
     sample_targets = []
     for i in range(min(4, len(val_dataset))):
@@ -123,7 +115,7 @@ def main():
         sample_images.append(img)
         sample_targets.append(tgt)
 
-    # Get predictions for sample images
+    # preds on the sample images
     sample_preds_by_model = {}
     for name in MODELS:
         ckpt_path = Path(config.checkpoint_dir) / f"{name}_best.pth"
@@ -146,7 +138,6 @@ def main():
                 preds.append({k: v.cpu() for k, v in out.items()})
         sample_preds_by_model[name] = preds
 
-    # Generate ALL plots (with full metrics including PR data)
     generate_all_plots(
         histories=histories,
         all_metrics=all_metrics,

@@ -1,7 +1,4 @@
-"""Visualization and plotting utilities for pneumonia detection results.
-
-Generates all figures needed for the LaTeX report and presentation.
-"""
+# plotting utils - generates all figures for the report/presentation
 
 import json
 from pathlib import Path
@@ -15,7 +12,6 @@ import numpy as np
 import seaborn as sns
 import torch
 
-# Consistent style
 sns.set_theme(style="whitegrid", font_scale=1.2)
 MODEL_COLORS = {
     "fcos": "#2196F3",
@@ -40,12 +36,8 @@ def _save(fig, path: Path, dpi: int = 150, close: bool = True):
     print(f"  Saved: {path}")
 
 
-# -----------------------------------------------------------------------
-# 1. Training loss curves
-# -----------------------------------------------------------------------
-
 def plot_training_losses(histories: Dict[str, Dict], output_dir: Path):
-    """Plot training loss vs. epoch for all models."""
+    """training loss vs epoch."""
     fig, ax = plt.subplots(figsize=(10, 6))
 
     for name, hist in histories.items():
@@ -63,10 +55,6 @@ def plot_training_losses(histories: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "training_loss.pdf")
 
 
-# -----------------------------------------------------------------------
-# 2. Learning rate schedule
-# -----------------------------------------------------------------------
-
 def plot_learning_rates(histories: Dict[str, Dict], output_dir: Path):
     fig, ax = plt.subplots(figsize=(10, 5))
     for name, hist in histories.items():
@@ -82,12 +70,8 @@ def plot_learning_rates(histories: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "learning_rate.png")
 
 
-# -----------------------------------------------------------------------
-# 3. AP comparison bar chart (paper Table 2/3 style)
-# -----------------------------------------------------------------------
-
 def plot_ap_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
-    """Grouped bar chart of AP metrics across models."""
+    """grouped AP bar chart."""
     metrics_keys = ["AP@0.5", "AP@0.5:0.95", "AP_M", "AP_L"]
     labels = ["AP@0.5", "AP@[.5:.95]", r"$AP_M$", r"$AP_L$"]
     model_names = list(all_metrics.keys())
@@ -112,7 +96,7 @@ def plot_ap_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
     ax.set_ylabel("Score (%)")
     ax.set_title("Average Precision Comparison")
     ax.legend()
-    # Auto-scale y-axis based on data with padding
+    # y-axis with headroom
     all_vals = []
     for name in model_names:
         all_vals.extend([all_metrics[name].get(k, 0) * 100 for k in metrics_keys])
@@ -121,10 +105,6 @@ def plot_ap_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "ap_comparison.png", close=False)
     _save(fig, output_dir / "ap_comparison.pdf")
 
-
-# -----------------------------------------------------------------------
-# 4. AR comparison bar chart
-# -----------------------------------------------------------------------
 
 def plot_ar_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
     metrics_keys = ["AR@10", "AR_M", "AR_L"]
@@ -151,7 +131,7 @@ def plot_ar_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
     ax.set_ylabel("Score (%)")
     ax.set_title("Average Recall Comparison")
     ax.legend()
-    # Auto-scale y-axis based on data with padding
+    # y-axis with headroom
     all_vals = []
     for name in model_names:
         all_vals.extend([all_metrics[name].get(k, 0) * 100 for k in metrics_keys])
@@ -160,10 +140,6 @@ def plot_ar_comparison(all_metrics: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "ar_comparison.png", close=False)
     _save(fig, output_dir / "ar_comparison.pdf")
 
-
-# -----------------------------------------------------------------------
-# 5. Precision–Recall curves
-# -----------------------------------------------------------------------
 
 def plot_pr_curves(all_metrics: Dict[str, Dict], output_dir: Path):
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -188,16 +164,12 @@ def plot_pr_curves(all_metrics: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "pr_curve.pdf")
 
 
-# -----------------------------------------------------------------------
-# 6. AP across IoU thresholds
-# -----------------------------------------------------------------------
-
 def plot_ap_vs_iou(
     predictions_by_model: Dict[str, List[Dict]],
     targets: List[Dict],
     output_dir: Path,
 ):
-    """AP as a function of IoU threshold for each model."""
+    """AP vs IoU threshold per model."""
     from src.evaluate import compute_ap_at_iou
 
     iou_thresholds = np.arange(0.5, 1.0, 0.05)
@@ -221,16 +193,12 @@ def plot_ap_vs_iou(
     _save(fig, output_dir / "ap_vs_iou.pdf")
 
 
-# -----------------------------------------------------------------------
-# 7. Validation AP over epochs
-# -----------------------------------------------------------------------
-
 def plot_val_ap_over_epochs(histories: Dict[str, Dict], output_dir: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
 
     for name, hist in histories.items():
         val_metrics = hist.get("val_metrics", [])
-        # Filter out None entries (skipped validation epochs)
+        # skip None (epochs without validation)
         epochs_with_val = []
         aps = []
         for i, m in enumerate(val_metrics):
@@ -250,10 +218,6 @@ def plot_val_ap_over_epochs(histories: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "val_ap_over_epochs.png", close=False)
     _save(fig, output_dir / "val_ap_over_epochs.pdf")
 
-
-# -----------------------------------------------------------------------
-# 8. Patient-level classification metrics
-# -----------------------------------------------------------------------
 
 def plot_classification_metrics(all_metrics: Dict[str, Dict], output_dir: Path):
     keys = ["patient_accuracy", "patient_precision", "patient_recall", "patient_f1"]
@@ -280,7 +244,7 @@ def plot_classification_metrics(all_metrics: Dict[str, Dict], output_dir: Path):
     ax.set_xticklabels(labels)
     ax.set_ylabel("Score (%)")
     ax.set_title("Patient-Level Classification Metrics", pad=14)
-    # Place legend below the axes (tall Recall bars collide with top-anchored legends)
+    # legend below - tall recall bars collide with a top legend
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08),
               ncol=min(len(model_names), 4), frameon=False)
     ax.set_ylim(0, 110)
@@ -288,10 +252,6 @@ def plot_classification_metrics(all_metrics: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "classification_metrics.png", close=False)
     _save(fig, output_dir / "classification_metrics.pdf")
 
-
-# -----------------------------------------------------------------------
-# 9. Detection visualization on sample images
-# -----------------------------------------------------------------------
 
 def plot_detection_samples(
     images: List[torch.Tensor],
@@ -302,16 +262,7 @@ def plot_detection_samples(
     per_model_threshold: Optional[Dict[str, float]] = None,
     default_threshold: float = 0.3,
 ):
-    """Show ground truth vs. predictions side by side.
-
-    Args:
-        per_model_threshold: Optional per-model confidence threshold for display.
-            Models output scores on different scales (e.g. FCOS optimal ≈ 0.49,
-            RetinaNet ≈ 0.14, Faster R-CNN ≈ 0.84), so a single global threshold
-            hides boxes from the more-conservatively-calibrated models. Passing
-            per-model (typically Youden-optimal) thresholds produces a visually
-            fair comparison.
-    """
+    """GT vs predictions side by side. per_model_threshold: display cutoff per model (scores live on different scales, so one global threshold is unfair)."""
     n_models = len(predictions_by_model)
     model_names = list(predictions_by_model.keys())
     n_cols = 1 + n_models  # GT + each model
@@ -333,7 +284,7 @@ def plot_detection_samples(
         gt = targets[row]
         has_gt = len(gt["boxes"]) > 0
 
-        # Ground truth column
+        # GT column
         ax = axes[row, 0]
         ax.imshow(img, cmap="gray")
         for box in gt["boxes"]:
@@ -345,12 +296,11 @@ def plot_detection_samples(
         title = "Ground Truth" if row == 0 else ""
         if row == 0:
             ax.set_title(title, fontsize=11)
-        # Tag the row with pos/neg
         ax.set_ylabel(f"case {row+1}\n{'(positive)' if has_gt else '(negative)'}",
                       fontsize=9, rotation=0, labelpad=34, va="center")
         ax.set_xticks([]); ax.set_yticks([])
 
-        # Each model's predictions
+        # prediction columns
         for col, name in enumerate(model_names, 1):
             ax = axes[row, col]
             ax.imshow(img, cmap="gray")
@@ -382,10 +332,6 @@ def plot_detection_samples(
     _save(fig, output_dir / "detection_samples.pdf")
 
 
-# -----------------------------------------------------------------------
-# 10. Epoch time comparison
-# -----------------------------------------------------------------------
-
 def plot_epoch_times(histories: Dict[str, Dict], output_dir: Path):
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -410,12 +356,8 @@ def plot_epoch_times(histories: Dict[str, Dict], output_dir: Path):
     _save(fig, output_dir / "epoch_times.pdf")
 
 
-# -----------------------------------------------------------------------
-# 11. Summary table (LaTeX-ready)
-# -----------------------------------------------------------------------
-
 def generate_latex_table(all_metrics: Dict[str, Dict], output_dir: Path):
-    """Generate a LaTeX-formatted comparison table (paper Table 3 style)."""
+    """LaTeX comparison table."""
     keys = ["AP@0.5", "AP_M", "AP_L", "AR@10", "AR_M", "AR_L"]
     headers = ["Method", "AP", r"$AP_M$", r"$AP_L$", r"$AR_{10}$", r"$AR_M$", r"$AR_L$"]
 
@@ -450,10 +392,6 @@ def generate_latex_table(all_metrics: Dict[str, Dict], output_dir: Path):
     return table_str
 
 
-# -----------------------------------------------------------------------
-# Master function
-# -----------------------------------------------------------------------
-
 def generate_all_plots(
     histories: Dict[str, Dict],
     all_metrics: Dict[str, Dict],
@@ -462,7 +400,7 @@ def generate_all_plots(
     targets: Optional[List[Dict]] = None,
     images: Optional[List[torch.Tensor]] = None,
 ):
-    """Generate all plots and save to output_dir."""
+    """generate all plots into output_dir."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -483,7 +421,7 @@ def generate_all_plots(
     if images is not None and targets is not None and predictions_by_model is not None:
         plot_detection_samples(images, targets, predictions_by_model, out)
 
-    # Save metrics as JSON (include precisions/recalls for PR curves)
+    # dump metrics (keeps precisions/recalls for the PR curves)
     serializable = {}
     for name, m in all_metrics.items():
         serializable[name] = {k: v for k, v in m.items()}

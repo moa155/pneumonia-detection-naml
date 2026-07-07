@@ -1,19 +1,4 @@
-"""Detection transforms with medical imaging augmentations.
-
-Augmentation pipeline optimized for chest X-ray pneumonia detection:
-  - CLAHE: Enhances local contrast in X-ray images (medical imaging standard)
-  - RandomBrightnessContrast: Simulates exposure/gain variation
-  - RandomGamma: Simulates display gamma differences
-  - HorizontalFlip + VerticalFlip: Paper uses H+V flip + mirror for 8x expansion
-  - RandomResizedCrop: Scale jitter for robustness
-  - ShiftScaleRotate: Minor position/scale/rotation changes (patient positioning)
-  - GaussNoise/GaussianBlur: Simulates acquisition noise and defocus
-  - GridDistortion/ElasticTransform: Simulates anatomical variation
-  - CoarseDropout: Regularization via random occlusion
-
-Uses albumentations for robust bbox-consistent augmentation with automatic
-coordinate transformation for geometric augmentations.
-"""
+# Detection augmentations (albumentations, bbox-aware) for chest X-rays.
 
 from typing import Dict, Tuple
 
@@ -30,34 +15,28 @@ except ImportError:
 
 
 class DetectionTransform:
-    """Wraps an albumentations pipeline for (image, target) -> (tensor, target).
-
-    Handles conversion between the dataset's (numpy HWC float32, target dict)
-    format and albumentations' expected input (uint8 HWC + bbox list).
-    """
+    """Wrap an albumentations pipeline: (image, target) -> (tensor, target)."""
 
     def __init__(self, album_transform):
         self.transform = album_transform
 
     def __call__(self, image: np.ndarray, target: Dict) -> Tuple[torch.Tensor, Dict]:
-        # Convert float32 [0,1] -> uint8 [0,255] for albumentations
+        # albumentations wants uint8 HWC
         if image.dtype in (np.float32, np.float64):
             image_uint8 = np.clip(image * 255, 0, 255).astype(np.uint8)
         else:
             image_uint8 = image
 
-        # Extract boxes and labels for albumentations
         boxes = target["boxes"].numpy().tolist() if len(target["boxes"]) > 0 else []
         labels = target["labels"].numpy().tolist() if len(target["labels"]) > 0 else []
 
-        # Apply augmentation pipeline
         result = self.transform(image=image_uint8, bboxes=boxes, labels=labels)
 
-        # Convert uint8 HWC -> float32 CHW tensor (avoids quantization round-trip)
+        # back to float32 CHW tensor
         img_np = result["image"]
         img_tensor = torch.from_numpy(img_np.transpose(2, 0, 1).copy()).float().div_(255.0)
 
-        # Reconstruct target from augmented bboxes
+        # rebuild target from augmented boxes
         out_boxes = result["bboxes"]
         out_labels = result["labels"]
 
@@ -85,7 +64,7 @@ class DetectionTransform:
 
 
 class _FallbackToTensor:
-    """Fallback transform when albumentations is not available."""
+    """Used when albumentations isn't installed: just to-tensor."""
 
     def __call__(self, image: np.ndarray, target: Dict) -> Tuple[torch.Tensor, Dict]:
         if image.dtype in (np.float32, np.float64):
@@ -98,15 +77,15 @@ class _FallbackToTensor:
 
 
 def _build_train_pipeline():
-    """Build albumentations training pipeline for chest X-ray detection."""
+    """Training pipeline."""
     transforms = []
 
-    # --- Medical imaging specific ---
+    # local contrast (standard for X-rays)
     transforms.append(
         A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.3)
     )
 
-    # --- Photometric augmentations ---
+    # photometric
     transforms.append(
         A.RandomBrightnessContrast(
             brightness_limit=0.2, contrast_limit=0.2, p=0.4
@@ -116,11 +95,11 @@ def _build_train_pipeline():
         A.RandomGamma(gamma_limit=(80, 120), p=0.2)
     )
 
-    # --- Geometric augmentations (paper: H+V flip + mirror for 8x expansion) ---
+    # flips (paper: H+V+mirror = 8x)
     transforms.append(A.HorizontalFlip(p=0.5))
     transforms.append(A.VerticalFlip(p=0.5))
 
-    # --- Random resized crop (scale jitter) ---
+    # scale jitter
     if _ALBU_V2:
         transforms.append(
             A.RandomResizedCrop(
@@ -140,7 +119,7 @@ def _build_train_pipeline():
                 translate_percent={"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
                 scale=(0.9, 1.1),
                 rotate=(-10, 10),
-                # albumentations 2.x: `mode` removed; default is BORDER_CONSTANT.
+                # albu 2.x dropped `mode`, defaults to BORDER_CONSTANT
                 fill=0,
                 p=0.3,
             )
@@ -151,13 +130,13 @@ def _build_train_pipeline():
                 shift_limit=0.05,
                 scale_limit=0.1,
                 rotate_limit=10,
-                border_mode=0,  # cv2.BORDER_CONSTANT
+                border_mode=0,  # BORDER_CONSTANT
                 value=0,
                 p=0.3,
             )
         )
 
-    # --- Noise and blur ---
+    # noise / blur
     transforms.append(
         A.OneOf(
             [
@@ -168,7 +147,7 @@ def _build_train_pipeline():
         )
     )
 
-    # --- Elastic/grid distortion (simulates anatomical variation) ---
+    # elastic / grid distortion
     if _ALBU_V2:
         transforms.append(
             A.OneOf(
@@ -190,7 +169,7 @@ def _build_train_pipeline():
             )
         )
 
-    # --- Regularization (random occlusion) ---
+    # random occlusion
     if _ALBU_V2:
         transforms.append(
             A.CoarseDropout(
@@ -217,14 +196,14 @@ def _build_train_pipeline():
         bbox_params=A.BboxParams(
             format="pascal_voc",
             label_fields=["labels"],
-            min_area=100,         # Drop boxes smaller than 10x10 pixels
-            min_visibility=0.3,   # Drop boxes less than 30% visible after crop
+            min_area=100,         # drop < 10x10 px
+            min_visibility=0.3,   # drop if <30% visible after crop
         ),
     )
 
 
 def _build_val_pipeline():
-    """Build albumentations validation pipeline (no augmentation)."""
+    """Val pipeline: no augmentation, just bbox bookkeeping."""
     return A.Compose(
         [],
         bbox_params=A.BboxParams(
@@ -235,12 +214,7 @@ def _build_val_pipeline():
 
 
 def get_train_transforms(use_augmentation: bool = True) -> DetectionTransform:
-    """Training transforms with medical imaging augmentations.
-
-    Uses albumentations for CLAHE, rotation, contrast, noise, elastic
-    distortion — all critical for chest X-ray detection performance.
-    Falls back to simple tensor conversion if albumentations unavailable.
-    """
+    """Train transforms (falls back to to-tensor without albumentations)."""
     if not HAS_ALBUMENTATIONS:
         return _FallbackToTensor()
 
@@ -253,7 +227,7 @@ def get_train_transforms(use_augmentation: bool = True) -> DetectionTransform:
 
 
 def get_val_transforms() -> DetectionTransform:
-    """Validation/test transforms (no augmentation)."""
+    """Val/test transforms."""
     if not HAS_ALBUMENTATIONS:
         return _FallbackToTensor()
     return DetectionTransform(_build_val_pipeline())

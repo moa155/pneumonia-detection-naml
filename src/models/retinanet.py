@@ -1,13 +1,4 @@
-"""RetinaNet: One-stage anchor-based detector (comparison method).
-
-RetinaNet (Lin et al., 2017) is included as a comparison method from the
-paper's Table 3.  It uses:
-  - ResNet-50 + FPN backbone
-  - Anchor-based detection with focal loss
-  - Separate classification and regression sub-networks
-
-Fine-tuned from COCO-pretrained weights for faster convergence.
-"""
+"""RetinaNet (Lin et al. 2017): one-stage anchor-based baseline."""
 
 import math
 
@@ -17,22 +8,14 @@ from torchvision.models.detection import retinanet_resnet50_fpn_v2
 
 def build_retinanet(num_classes: int = 2, pretrained_backbone: bool = True,
                     min_size: int = 512, max_size: int = 512):
-    """Build RetinaNet with ResNet-50 FPN v2 backbone.
-
-    When pretrained_backbone=True, loads full COCO-pretrained weights
-    and replaces only the final classification layer for the target
-    number of classes. Keeps pretrained backbone + FPN + shared head
-    conv layers.
-    """
+    """RetinaNet + ResNet-50 FPN v2."""
     if pretrained_backbone:
-        # Load full COCO-pretrained model
         model = retinanet_resnet50_fpn_v2(
             weights="DEFAULT",
             min_size=min_size,
             max_size=max_size,
         )
-        # Replace only the final classification conv for our num_classes
-        # (keeps the 4 shared conv layers pretrained)
+        # replace only the final cls conv, keep the 4 shared convs pretrained
         num_anchors = model.head.classification_head.num_anchors
         in_channels = model.backbone.out_channels
         model.head.classification_head.num_classes = num_classes

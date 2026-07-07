@@ -1,8 +1,4 @@
-"""RSNA Pneumonia Detection Challenge dataset loader.
-
-Supports both DICOM (.dcm) and preprocessed PNG (.png) images.
-PNG loading is ~10-50x faster; use `python -m src.preprocess` first.
-"""
+# RSNA dataset loader. Uses PNG if preprocessed (much faster), else DICOM.
 
 import os
 from pathlib import Path
@@ -15,15 +11,7 @@ from torch.utils.data import Dataset
 
 
 class RSNAPneumoniaDataset(Dataset):
-    """Dataset for the RSNA Pneumonia Detection Challenge.
-
-    Each sample is a chest X-ray image with bounding-box annotations
-    for pneumonia-positive regions.  Images without pneumonia have empty
-    annotation sets.
-
-    The dataset is available at:
-    https://www.kaggle.com/c/rsna-pneumonia-detection-challenge/data
-    """
+    """Chest X-rays + pneumonia boxes (empty box set = negative)."""
 
     def __init__(
         self,
@@ -33,7 +21,7 @@ class RSNAPneumoniaDataset(Dataset):
     ):
         self.transforms = transforms
 
-        # Determine image format: prefer PNG over DICOM
+        # prefer PNG dir if it exists
         image_dir = Path(image_dir)
         png_dir = image_dir.parent / "stage_2_train_images_png"
         if png_dir.exists() and any(png_dir.iterdir()):
@@ -43,7 +31,7 @@ class RSNAPneumoniaDataset(Dataset):
             self.image_dir = image_dir
             self.use_png = False
 
-        # Group bounding boxes by patient ID using groupby (O(N) instead of O(N*M))
+        # group boxes per patient (groupby is O(N), not O(N*M))
         self.patient_ids = annotations_df["patientId"].unique().tolist()
 
         self.annotations: Dict[str, List[List[float]]] = {}
@@ -53,10 +41,10 @@ class RSNAPneumoniaDataset(Dataset):
             for _, row in group.iterrows():
                 if row["Target"] == 1 and not np.isnan(row["x"]):
                     x, y, w, h = row["x"], row["y"], row["width"], row["height"]
-                    boxes.append([x, y, x + w, y + h])  # xyxy format
+                    boxes.append([x, y, x + w, y + h])  # xyxy
             self.annotations[pid] = boxes
 
-        # Ensure all patient_ids have an entry (some may not be in grouped)
+        # make sure every patient has an entry
         for pid in self.patient_ids:
             if pid not in self.annotations:
                 self.annotations[pid] = []
@@ -65,14 +53,11 @@ class RSNAPneumoniaDataset(Dataset):
         return len(self.patient_ids)
 
     def get_positive_mask(self) -> List[bool]:
-        """Return boolean list: True for patients with pneumonia boxes.
-
-        Used by WeightedRandomSampler to oversample positive patients.
-        """
+        """True per positive patient (for WeightedRandomSampler oversampling)."""
         return [len(self.annotations[pid]) > 0 for pid in self.patient_ids]
 
     def _load_image(self, patient_id: str) -> np.ndarray:
-        """Load image and return as float32 HWC array in [0, 1]."""
+        """Load image as float32 HWC in [0, 1]."""
         try:
             if self.use_png:
                 path = self.image_dir / f"{patient_id}.png"
@@ -93,7 +78,7 @@ class RSNAPneumoniaDataset(Dataset):
         except Exception as e:
             raise RuntimeError(f"Failed to load image for patient {patient_id}: {e}")
 
-        # Single-channel -> 3-channel
+        # grayscale -> 3ch
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
         return img
@@ -102,11 +87,10 @@ class RSNAPneumoniaDataset(Dataset):
         pid = self.patient_ids[idx]
         image = self._load_image(pid)
 
-        # Build target dict
         boxes = self.annotations[pid]
         if len(boxes) > 0:
             boxes_t = torch.as_tensor(boxes, dtype=torch.float32)
-            labels_t = torch.ones(len(boxes), dtype=torch.int64)  # class 1 = pneumonia
+            labels_t = torch.ones(len(boxes), dtype=torch.int64)  # 1 = pneumonia
             areas = (boxes_t[:, 2] - boxes_t[:, 0]) * (boxes_t[:, 3] - boxes_t[:, 1])
         else:
             boxes_t = torch.zeros((0, 4), dtype=torch.float32)
@@ -130,11 +114,7 @@ class RSNAPneumoniaDataset(Dataset):
 def load_rsna_dataframes(
     labels_csv: str, detail_csv: Optional[str] = None
 ) -> pd.DataFrame:
-    """Load and merge RSNA label CSVs.
-
-    Returns a DataFrame with columns:
-        patientId, x, y, width, height, Target [, class]
-    """
+    """Load labels csv, optionally merge the class-detail csv."""
     df = pd.read_csv(labels_csv)
     if detail_csv is not None and os.path.exists(detail_csv):
         detail_df = pd.read_csv(detail_csv)
@@ -144,5 +124,5 @@ def load_rsna_dataframes(
 
 
 def collate_fn(batch):
-    """Custom collate for variable-size bounding boxes."""
+    """Collate keeping variable box counts (no stacking)."""
     return tuple(zip(*batch))

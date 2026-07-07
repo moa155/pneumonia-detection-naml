@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-flight smoke check before launching the cloud training run.
-
-Verifies that all imports work, GPUs are visible, albumentations transforms
-build and apply, models build, and analysis modules import. Exits 0 if all
-checks pass, 1 otherwise.
-
-Usage:
-    python scripts/smoke_check.py
-"""
+# Pre-flight check before the cloud run: imports, GPUs, transforms, models. Exit 0/1.
 import sys
 import traceback
 from pathlib import Path
@@ -18,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 checks = []
 print(f"Python: {sys.version.split()[0]}")
 
-# 1) Torch + CUDA
+# torch + cuda
 try:
     import torch
     import torchvision
@@ -34,14 +26,14 @@ except Exception as e:
     traceback.print_exc()
     checks.append(("torch+cuda", False))
 
-# 2) Albumentations (likely 1.x vs 2.x breakage)
+# albumentations (watch for 1.x vs 2.x breakage)
 try:
     import albumentations as A
     print(f"  albumentations={A.__version__}")
     from src.transforms import get_train_transforms, get_val_transforms
     t_train = get_train_transforms(True)
     t_val = get_val_transforms()
-    # DetectionTransform signature is (image: np.ndarray, target: Dict) -> (Tensor, Dict)
+    # transform takes (np image, target dict) -> (tensor, dict)
     dummy = np.random.rand(512, 512, 3).astype(np.float32)
     dummy_target = {
         "boxes": torch.tensor([[10., 10., 100., 100.]]),
@@ -60,7 +52,7 @@ except Exception as e:
     traceback.print_exc()
     checks.append(("albumentations", False))
 
-# 3) Models (architecture only, no checkpoint)
+# models (arch only, no checkpoint)
 try:
     from src.models import build_model
     for n in ("fcos", "retinanet", "faster_rcnn"):
@@ -73,7 +65,7 @@ except Exception as e:
     traceback.print_exc()
     checks.append(("models", False))
 
-# 4) Evaluate + analysis modules
+# evaluate + analysis
 try:
     from src.evaluate import compute_metrics
     from src.analysis import bootstrap_ap50, learnt_aggregator
@@ -84,7 +76,7 @@ except Exception as e:
     traceback.print_exc()
     checks.append(("eval/analysis", False))
 
-# 5) Ensemble
+# ensemble
 try:
     from src.ensemble import ensemble_predictions
     print(f"  ensemble OK")
@@ -94,7 +86,7 @@ except Exception as e:
     traceback.print_exc()
     checks.append(("ensemble", False))
 
-# 6) Pipeline script syntactic check
+# pipeline script syntax
 try:
     import subprocess
     r = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "run_full_pipeline.sh")],
